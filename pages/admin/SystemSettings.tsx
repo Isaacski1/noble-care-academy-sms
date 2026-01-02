@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../../components/Layout';
+import { showToast } from '../../services/toast';
 import { db } from '../../services/mockDb';
 import { Notice } from '../../types';
 import { Plus, Trash2, Megaphone, Book, Edit, Check, X, Save, Calendar } from 'lucide-react';
@@ -50,7 +51,7 @@ const SystemSettings = () => {
       setSavingConfig(true);
       await db.updateSchoolConfig(config);
       setSavingConfig(false);
-      alert('Configuration saved successfully!');
+      showToast('Configuration saved successfully!', { type: 'success' });
   };
 
   // --- Notices Handlers ---

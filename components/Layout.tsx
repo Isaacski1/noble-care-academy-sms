@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../services/mockDb';
 import { UserRole, SystemNotification } from '../types';
+import Toast from './Toast';
 import { 
   LogOut, 
   Menu, 
@@ -207,7 +208,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
                  {showNotifications && (
                     <>
                         <div className="fixed inset-0 z-40" onClick={() => setShowNotifications(false)}></div>
-                        <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white bg-opacity-100 rounded-xl shadow-2xl border border-slate-200 z-50 overflow-hidden">
+                        <div className="fixed right-4 top-16 w-80 sm:w-96 bg-white bg-opacity-100 rounded-xl shadow-2xl border border-slate-200 z-50 overflow-hidden">
                             <div className="p-3 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                                 <h4 className="font-bold text-slate-800 text-sm">Notifications</h4>
                                 <span className="text-xs text-slate-500">{unreadCount} unread</span>
@@ -257,6 +258,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
         <main className="flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-8">
           {children}
         </main>
+        <Toast />
       </div>
     </div>
   );

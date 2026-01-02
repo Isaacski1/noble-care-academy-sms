@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../../components/Layout';
+import { showToast } from '../../services/toast';
 import { db } from '../../services/mockDb';
 import { Student } from '../../types';
 import { CLASSES_LIST, calculateGrade, getGradeColor } from '../../constants';
@@ -99,7 +100,7 @@ const ManageStudents = () => {
         console.error("Delete failed", error);
         // Revert state if DB fails
         setStudents(previousStudents);
-        alert("Failed to delete student. Please try again.");
+        showToast("Failed to delete student. Please try again.", { type: 'error' });
     }
   };
 

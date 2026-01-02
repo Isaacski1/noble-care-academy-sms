@@ -41,8 +41,24 @@ const TeacherDashboard = () => {
   const [selectedDay, setSelectedDay] = useState<string>(getCurrentDay());
   const [scheduleForDay, setScheduleForDay] = useState<TimeSlot[]>([]);
 
-  // Attendance Trend State
-  const [attendanceTrend, setAttendanceTrend] = useState<{ day: string, percentage: number }[]>([]);
+    // Attendance Trend State
+    const [attendanceTrend, setAttendanceTrend] = useState<{ day: string, percentage: number }[]>([]);
+
+    const getWeekDates = () => {
+        const now = new Date();
+        const currentDay = now.getDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday
+        const mondayOffset = currentDay === 0 ? -6 : 1 - currentDay; // Adjust to get Monday
+        const monday = new Date(now);
+        monday.setDate(now.getDate() + mondayOffset);
+
+        const dates: string[] = [];
+        for (let i = 0; i < 5; i++) { // Monday to Friday
+            const date = new Date(monday);
+            date.setDate(monday.getDate() + i);
+            dates.push(date.toISOString().split('T')[0]); // YYYY-MM-DD
+        }
+        return dates;
+    };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -79,16 +95,19 @@ const TeacherDashboard = () => {
 
                 const totalStudents = students.length || 1; // Prevent division by zero
 
-                // Sort records by date descending (newest first)
-                attendanceRecords.sort((a, b) => b.date.localeCompare(a.date));
+                // Get dates for the selected week
+                const weekDates = getWeekDates();
 
-                // Take the 5 most recent records
-                const recentRecords = attendanceRecords.slice(0, 5).reverse(); // Reverse back to chronological order (Oldest -> Newest) for the chart
+                // Filter records to the selected week's dates
+                const weekRecords = attendanceRecords.filter(record => weekDates.includes(record.date));
 
-                const trendData = recentRecords.map(record => {
-                    const dateObj = new Date(record.date);
+                // Map to trend data for each day of the week
+                const trendData = weekDates.map(date => {
+                    const record = weekRecords.find(r => r.date === date);
+                    const percentage = record ? Math.round((record.presentStudentIds.length / totalStudents) * 100) : 0;
+                    const [y, m, d] = date.split('-').map(Number);
+                    const dateObj = new Date(y, m - 1, d); // construct local date to avoid timezone shift
                     const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' }); // "Mon", "Tue"
-                    const percentage = Math.round((record.presentStudentIds.length / totalStudents) * 100);
                     return { day: dayName, percentage };
                 });
 
@@ -100,7 +119,7 @@ const TeacherDashboard = () => {
         }
     };
     fetchData();
-  }, [selectedClassId]);
+    }, [selectedClassId]);
 
   // Update displayed schedule when day or data changes
   useEffect(() => {
@@ -151,7 +170,7 @@ const TeacherDashboard = () => {
             )}
 
             <div className="flex gap-2">
-                <span className="px-3 py-1 bg-amber-50 text-amber-700 text-xs font-bold rounded-full border border-amber-100 uppercase tracking-wide">
+                <span className="px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-full border border-emerald-100 uppercase tracking-wide">
                     {currentTerm} Active
                 </span>
             </div>
@@ -194,9 +213,9 @@ const TeacherDashboard = () => {
                     <h3 className="font-bold text-slate-800 flex items-center">
                         <TrendingUp className="w-5 h-5 mr-2 text-red-700"/> Weekly Attendance Trend
                     </h3>
-                    <span className="text-xs text-slate-400">
-                        {attendanceTrend.length > 0 ? 'Last 5 School Days' : 'No Data'}
-                    </span>
+                    <div className="flex gap-2">
+                        <span className="px-3 py-1 text-xs font-medium rounded-full bg-red-600 text-white">This Week</span>
+                    </div>
                 </div>
                 <div className="flex items-end justify-between h-40 gap-2 px-2">
                     {attendanceTrend.length === 0 ? (

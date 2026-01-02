@@ -5,6 +5,7 @@ import { db } from '../../services/mockDb';
 import { Student, Assessment } from '../../types';
 import { CLASSES_LIST, ACADEMIC_YEAR, CURRENT_TERM, calculateGrade, getGradeColor } from '../../constants';
 import { Save } from 'lucide-react';
+import { showToast } from '../../services/toast';
 
 const AssessmentPage = () => {
   const { user } = useAuth();
@@ -137,15 +138,15 @@ const AssessmentPage = () => {
           
           // Notification logic
           const className = CLASSES_LIST.find(c => c.id === selectedClassId)?.name || selectedClassId;
-          await db.addSystemNotification(
-            `${user?.name} updated assessments for ${className} in ${selectedSubject}.`,
-            'assessment'
-          );
+                    await db.addSystemNotification(
+                        `${user?.name} updated assessments for ${className} in ${selectedSubject}.`,
+                        'assessment'
+                    );
 
-          alert('Saved Successfully');
+                    showToast('Saved Successfully', { type: 'success' });
       } catch (e) {
           console.error(e);
-          alert('Error saving data');
+                    showToast('Error saving data', { type: 'error' });
       } finally {
           setSaving(false);
       }

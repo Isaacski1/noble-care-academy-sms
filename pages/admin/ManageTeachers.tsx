@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../../components/Layout';
+import { showToast } from '../../services/toast';
 import { db } from '../../services/mockDb';
 import { User, UserRole } from '../../types';
 import { CLASSES_LIST } from '../../constants';
@@ -36,12 +37,12 @@ const ManageTeachers = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.email || !formData.password) {
-        alert("Please fill in all fields including password.");
+        showToast("Please fill in all fields including password.", { type: 'error' });
         return;
     }
     
     if (formData.password.length < 6) {
-        alert("Password must be at least 6 characters.");
+        showToast("Password must be at least 6 characters.", { type: 'error' });
         return;
     }
 
@@ -83,14 +84,14 @@ const ManageTeachers = () => {
         setShowModal(false);
         setFormData({ role: UserRole.TEACHER, assignedClassIds: [], password: '' });
         fetchData();
-        alert(`Teacher created successfully!\nEmail: ${newTeacher.email}\nPassword: ${formData.password}`);
+        showToast(`Teacher created successfully! Email: ${newTeacher.email}`, { type: 'success', duration: 6000 });
 
     } catch (error: any) {
         console.error("Error creating teacher:", error);
         if (error.code === 'auth/email-already-in-use') {
-            alert("This email is already registered.");
+            showToast("This email is already registered.", { type: 'error' });
         } else {
-            alert("Failed to create teacher. " + error.message);
+            showToast("Failed to create teacher. " + error.message, { type: 'error' });
         }
     } finally {
         // Always delete the secondary app to clean up resources
@@ -121,9 +122,9 @@ const ManageTeachers = () => {
       // until you disable them in the Firebase Console.
     } catch (error) {
       console.error("Failed to delete teacher", error);
-      // Revert if failed
-      setTeachers(previousTeachers);
-      alert("Failed to delete teacher profile. Please try again.");
+            // Revert if failed
+            setTeachers(previousTeachers);
+            showToast("Failed to delete teacher profile. Please try again.", { type: 'error' });
     }
   };
 

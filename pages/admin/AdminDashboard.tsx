@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Layout from '../../components/Layout';
+import { showToast } from '../../services/toast';
 import { db } from '../../services/mockDb';
 import { 
   Users, 
@@ -193,7 +194,7 @@ const AdminDashboard = () => {
           fetchData();
           setEditingStudent(null);
       } catch(e) {
-          alert("Failed to update student");
+          showToast("Failed to update student", { type: 'error' });
       }
   };
 
@@ -293,14 +294,25 @@ const AdminDashboard = () => {
 
   const PerformanceSection = () => {
     const totalGrades = Object.keys(gradeDistribution).reduce((sum, key) => sum + gradeDistribution[key], 0) || 1;
-    
+
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
             {/* Grade Distribution Chart */}
             <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                <h3 className="font-bold text-slate-800 mb-6 flex items-center">
-                    <BarChart2 className="w-5 h-5 mr-2 text-red-700"/> Academic Performance Rate ({schoolConfig.currentTerm})
-                </h3>
+                <div className="flex justify-between items-center mb-6">
+                    <h3 className="font-bold text-slate-800 flex items-center">
+                        <BarChart2 className="w-5 h-5 mr-2 text-red-700"/> Academic Performance Rate ({schoolConfig.currentTerm})
+                    </h3>
+                    <button
+                        onClick={fetchData}
+                        disabled={loading}
+                        className="flex items-center px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                        title="Refresh performance data"
+                    >
+                        <RefreshCw size={14} className={`mr-1 ${loading ? 'animate-spin' : ''}`} />
+                        Refresh
+                    </button>
+                </div>
                 <div className="space-y-4">
                     {Object.entries(gradeDistribution).map(([grade, count]: [string, number]) => {
                         const percentage = Math.round((count / totalGrades) * 100);
@@ -438,7 +450,7 @@ const AdminDashboard = () => {
         <StatCard 
             title="Students" 
             value={stats.students} 
-            subtext="+12 this month"
+            subtext="Number of students enrolled"
             icon={GraduationCap} 
             colorClass="bg-red-50"
             iconColorClass="text-red-700"

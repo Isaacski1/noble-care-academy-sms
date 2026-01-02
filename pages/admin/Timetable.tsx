@@ -4,6 +4,7 @@ import { CLASSES_LIST } from '../../constants';
 import { db } from '../../services/mockDb';
 import { TimeSlot, ClassTimetable } from '../../types';
 import { Save, Plus, Trash2, Clock, Coffee, Sparkles, DoorOpen } from 'lucide-react';
+import { showToast } from '../../services/toast';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
@@ -52,7 +53,7 @@ const Timetable = () => {
     const handleAddSlot = () => {
         if (!newSlot.startTime || !newSlot.endTime || !newSlot.subject) return;
         if (newSlot.startTime >= newSlot.endTime) {
-            alert("End time must be after start time");
+            showToast("End time must be after start time", { type: 'error' });
             return;
         }
 
@@ -85,7 +86,7 @@ const Timetable = () => {
         };
         await db.saveTimetable(data);
         setLoading(false);
-        alert('Timetable saved successfully!');
+        showToast('Timetable saved successfully!', { type: 'success' });
     };
 
     const getClosingTime = (day: string) => {

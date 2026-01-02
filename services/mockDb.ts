@@ -132,6 +132,44 @@ class FirestoreService {
       await setDoc(doc(firestore, 'assessments', assessment.id), assessment);
   }
 
+  /**
+   * Remove all assessments for a given class. Optionally seed default zeroed
+   * assessments for every student in the class across configured subjects.
+   */
+  async resetAssessmentsForClass(classId: string, seedDefaults = false): Promise<void> {
+      const q = query(collection(firestore, 'assessments'), where('classId', '==', classId));
+      const snap = await getDocs(q);
+      const deletions = snap.docs.map(d => deleteDoc(doc(firestore, 'assessments', d.id)));
+      await Promise.all(deletions);
+
+      if (seedDefaults) {
+          const students = await this.getStudents(classId);
+          const subjects = await this.getSubjects();
+          const ops: Promise<void>[] = [];
+
+          for (const student of students) {
+              for (const subject of subjects) {
+                  const id = `${student.id}_${subject}_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+                  const assessment: Assessment = {
+                      id,
+                      studentId: student.id,
+                      classId,
+                      term: CURRENT_TERM as 1 | 2 | 3,
+                      academicYear: ACADEMIC_YEAR,
+                      subject,
+                      testScore: 0,
+                      homeworkScore: 0,
+                      projectScore: 0,
+                      examScore: 0,
+                      total: 0
+                  };
+                  ops.push(setDoc(doc(firestore, 'assessments', id), assessment));
+              }
+          }
+          await Promise.all(ops);
+      }
+  }
+
   // --- Notices ---
   async getNotices(): Promise<Notice[]> {
       const q = query(collection(firestore, 'notices')); 
