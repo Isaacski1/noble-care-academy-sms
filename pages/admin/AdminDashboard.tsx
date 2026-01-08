@@ -1699,38 +1699,38 @@ const AdminDashboard = () => {
         {/* Teacher Attendance Widgets */}
         <div className="space-y-6">
           {/* Today's Teacher Attendance */}
-          <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 rounded-2xl shadow-lg border border-emerald-200 flex flex-col min-h-[300px] hover:shadow-xl transition-shadow duration-300">
-              <div className="p-4 sm:p-6 border-b border-emerald-200 flex justify-between items-center">
+          <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 rounded-2xl shadow-lg border border-emerald-200 flex flex-col min-h-[260px] hover:shadow-xl transition-shadow duration-300">
+              <div className="p-3 sm:p-4 border-b border-emerald-200 flex justify-between items-center">
                   <div>
-                      <h3 className="font-bold text-emerald-900 text-lg">Teacher Attendance Today</h3>
-                      <p className="text-xs text-emerald-700 mt-1">Current day's staff presence overview</p>
+                      <h3 className="font-bold text-emerald-900 text-base sm:text-lg">Teacher Attendance Today</h3>
+                      <p className="text-[10px] sm:text-xs text-emerald-700 mt-0.5">Current day's staff presence overview</p>
                   </div>
-                  <div className="bg-emerald-100 p-2 rounded-full">
-                      <Users className="text-emerald-600" size={20} />
+                  <div className="bg-emerald-100 p-1.5 sm:p-2 rounded-full">
+                      <Users className="text-emerald-600" size={16} sm:size={20} />
                   </div>
               </div>
-              <div className="p-4 space-y-3 flex-1 overflow-y-auto max-h-[400px]">
+              <div className="p-3 space-y-2 flex-1 overflow-y-auto max-h-[300px] sm:max-h-[350px]">
                   {teacherAttendance.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-32 text-emerald-500">
-                          <div className="bg-emerald-100 p-4 rounded-full mb-3">
-                              <Users size={32} className="text-emerald-400"/>
+                      <div className="flex flex-col items-center justify-center h-24 text-emerald-500">
+                          <div className="bg-emerald-100 p-3 rounded-full mb-2">
+                              <Users size={24} className="text-emerald-400"/>
                           </div>
-                          <p className="text-sm font-medium text-center">No attendance marked yet today</p>
-                          <p className="text-xs text-emerald-400 mt-1">Teachers will appear here once they mark attendance</p>
+                          <p className="text-xs font-medium text-center">No attendance marked yet today</p>
+                          <p className="text-[10px] text-emerald-400 mt-0.5">Teachers will appear here once they mark attendance</p>
                       </div>
                   ) : (
-                      <div className="space-y-3">
+                      <div className="space-y-2">
                           {teacherAttendance.map((record) => (
-                              <div key={record.id} className="bg-white p-4 rounded-xl shadow-sm border border-emerald-100 hover:shadow-md transition-all duration-200 hover:border-emerald-200">
+                              <div key={record.id} className="bg-white p-3 rounded-lg shadow-sm border border-emerald-100 hover:shadow-md transition-all duration-200 hover:border-emerald-200">
                                   <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                                          <div className={`w-4 h-4 rounded-full flex-shrink-0 ${
+                                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                                          <div className={`w-3.5 h-3.5 rounded-full flex-shrink-0 ${
                                               record.status === 'present' ? 'bg-emerald-500' : 'bg-red-500'
                                           } shadow-sm`}></div>
                                           <div className="flex-1 min-w-0">
-                                              <div className="flex items-center gap-2 mb-1">
-                                                  <p className="text-sm font-semibold text-slate-800 truncate">{record.teacherName}</p>
-                                                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                              <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                                                  <p className="text-[10px] sm:text-xs font-semibold text-slate-800 truncate max-w-[120px] sm:max-w-none">{record.teacherName}</p>
+                                                  <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-medium flex-shrink-0 ${
                                                       record.status === 'present'
                                                           ? 'bg-emerald-100 text-emerald-700'
                                                           : 'bg-red-100 text-red-700'
@@ -1738,24 +1738,24 @@ const AdminDashboard = () => {
                                                       {record.status === 'present' ? 'Present' : 'Absent'}
                                                   </span>
                                               </div>
-                                              <p className="text-xs text-slate-500 truncate">
+                                              <p className="text-[9px] text-slate-500 truncate">
                                                   {record.teacherClasses || 'No classes assigned'}
                                               </p>
-                                              <p className="text-xs text-slate-400 mt-1">{record.date}</p>
+                                              <p className="text-[9px] text-slate-400 mt-0.5">{record.date}</p>
                                           </div>
                                       </div>
-                                      <div className="ml-3 flex-shrink-0">
-                                          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                                      <div className="ml-2 flex-shrink-0">
+                                          <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
                                               record.status === 'present'
                                                   ? 'bg-emerald-100 text-emerald-600'
                                                   : 'bg-red-100 text-red-600'
                                           }`}>
                                               {record.status === 'present' ? (
-                                                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                                                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                                                   </svg>
                                               ) : (
-                                                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                                                       <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
                                                   </svg>
                                               )}
@@ -1764,8 +1764,8 @@ const AdminDashboard = () => {
                                   </div>
                               </div>
                           ))}
-                          <div className="text-center mt-4 pt-3 border-t border-emerald-100">
-                              <p className="text-xs text-emerald-600 font-medium">
+                          <div className="text-center mt-3 pt-2 border-t border-emerald-100">
+                              <p className="text-[10px] text-emerald-600 font-medium">
                                   {teacherAttendance.length} teacher{teacherAttendance.length !== 1 ? 's' : ''} marked attendance today
                               </p>
                           </div>
@@ -1776,38 +1776,38 @@ const AdminDashboard = () => {
 
           {/* Teacher Term Attendance Statistics */}
           {(schoolConfig.schoolReopenDate !== new Date().toISOString().split('T')[0]) && (
-          <div className="bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 rounded-2xl shadow-lg border border-blue-200 flex flex-col min-h-[300px] hover:shadow-xl transition-shadow duration-300">
-              <div className="p-4 sm:p-6 border-b border-blue-200 flex justify-between items-center">
+          <div className="bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 rounded-2xl shadow-lg border border-blue-200 flex flex-col min-h-[280px] hover:shadow-xl transition-shadow duration-300">
+              <div className="p-3 sm:p-4 border-b border-blue-200 flex justify-between items-center">
                   <div>
-                      <h3 className="font-bold text-blue-900 text-lg">Teacher Attendance Summary</h3>
-                      <p className="text-xs text-blue-700 mt-1">Term-wide staff attendance statistics</p>
+                      <h3 className="font-bold text-blue-900 text-base sm:text-lg">Teacher Attendance Summary</h3>
+                      <p className="text-[10px] sm:text-xs text-blue-700 mt-0.5">Term-wide staff attendance statistics</p>
                   </div>
-                  <div className="bg-blue-100 p-2 rounded-full">
-                      <BarChart2 className="text-blue-600" size={20} />
+                  <div className="bg-blue-100 p-1.5 sm:p-2 rounded-full">
+                      <BarChart2 className="text-blue-600" size={16} sm:size={20} />
                   </div>
               </div>
-              <div className="p-4 space-y-3 flex-1 overflow-y-auto max-h-[400px]">
+              <div className="p-3 space-y-2 flex-1 overflow-y-auto max-h-[300px] sm:max-h-[350px]">
                   {teacherTermStats.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-32 text-blue-500">
-                          <div className="bg-blue-100 p-4 rounded-full mb-3">
-                              <BarChart2 size={32} className="text-blue-400"/>
+                      <div className="flex flex-col items-center justify-center h-24 text-blue-500">
+                          <div className="bg-blue-100 p-3 rounded-full mb-2">
+                              <BarChart2 size={24} className="text-blue-400"/>
                           </div>
-                          <p className="text-sm font-medium text-center">No attendance data available</p>
-                          <p className="text-xs text-blue-400 mt-1">Term statistics will appear as teachers mark attendance</p>
+                          <p className="text-xs font-medium text-center">No attendance data available</p>
+                          <p className="text-[10px] text-blue-400 mt-0.5">Term statistics will appear as teachers mark attendance</p>
                       </div>
                   ) : (
-                      <div className="space-y-3">
+                      <div className="space-y-2">
                           {teacherTermStats.map((stat: any) => (
-                              <div key={stat.id} className="bg-white p-4 rounded-xl shadow-sm border border-blue-100 hover:shadow-md transition-all duration-200 hover:border-blue-200">
+                              <div key={stat.id} className="bg-white p-3 rounded-lg shadow-sm border border-blue-100 hover:shadow-md transition-all duration-200 hover:border-blue-200">
                                   <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 flex-1 min-w-0">
                                           <div className="flex-shrink-0">
                                               <div className="relative">
-                                                  <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-                                                      <span className="text-sm font-bold text-blue-600">{stat.attendanceRate}%</span>
+                                                  <div className="w-9 h-9 bg-blue-100 rounded-full flex items-center justify-center">
+                                                      <span className="text-[10px] font-bold text-blue-600">{stat.attendanceRate}%</span>
                                                   </div>
-                                                  <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-white rounded-full flex items-center justify-center">
-                                                      <div className={`w-3 h-3 rounded-full ${
+                                                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-white rounded-full flex items-center justify-center">
+                                                      <div className={`w-2 h-2 rounded-full ${
                                                           stat.attendanceRate >= 80 ? 'bg-emerald-500' :
                                                           stat.attendanceRate >= 70 ? 'bg-amber-500' : 'bg-red-500'
                                                       }`}></div>
@@ -1815,9 +1815,9 @@ const AdminDashboard = () => {
                                               </div>
                                           </div>
                                           <div className="flex-1 min-w-0">
-                                              <div className="flex items-center gap-2 mb-1">
-                                                  <p className="text-sm font-semibold text-slate-800 break-words">{stat.name}</p>
-                                                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                              <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                                                  <p className="text-[10px] sm:text-xs font-semibold text-slate-800 truncate max-w-[120px] sm:max-w-none">{stat.name}</p>
+                                                  <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-medium flex-shrink-0 ${
                                                       stat.attendanceRate >= 80 ? 'bg-emerald-100 text-emerald-700' :
                                                       stat.attendanceRate >= 70 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
                                                   }`}>
@@ -1825,17 +1825,17 @@ const AdminDashboard = () => {
                                                        stat.attendanceRate >= 70 ? 'Good' : 'Needs Attention'}
                                                   </span>
                                               </div>
-                                              <p className="text-xs text-slate-500 truncate">
+                                              <p className="text-[9px] text-slate-500 truncate">
                                                   {stat.classes || 'No classes assigned'}
                                               </p>
-                                              <p className="text-xs text-slate-400 mt-1">{stat.presentDays} present / {stat.totalDays} total days</p>
+                                              <p className="text-[9px] text-slate-400 mt-0.5">{stat.presentDays} present / {stat.totalDays} total days</p>
                                           </div>
                                       </div>
                                   </div>
                               </div>
                           ))}
-                          <div className="text-center mt-4 pt-3 border-t border-blue-100">
-                              <p className="text-xs text-blue-600 font-medium">
+                          <div className="text-center mt-3 pt-2 border-t border-blue-100">
+                              <p className="text-[10px] text-blue-600 font-medium">
                                   Average attendance: {teacherTermStats.length > 0 ? Math.round(teacherTermStats.reduce((sum: number, stat: any) => sum + stat.attendanceRate, 0) / teacherTermStats.length) : 0}%
                               </p>
                           </div>
