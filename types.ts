@@ -90,6 +90,7 @@ export interface School {
   };
   studentsCount?: number;
   schoolType?: string;
+  isDemo?: boolean;
 }
 
 export interface PlanConfig {

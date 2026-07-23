@@ -1594,6 +1594,124 @@ class FirestoreService {
     await Promise.all(deletions);
   }
 
+  async generateDemoAcademicData(
+    schoolId: string,
+    students: Student[],
+    onProgress?: (percent: number, message: string) => void,
+  ): Promise<{ attendanceCreated: number; assessmentsCreated: number }> {
+    const scopedSchoolId = this.requireSchoolId(schoolId, "generateDemoAcademicData");
+    const schoolSnap = await getDoc(doc(firestore, "schools", scopedSchoolId));
+    const schoolData = schoolSnap.data() as Partial<School> | undefined;
+    const isDemoSchool =
+      schoolData?.isDemo === true || /\bdemo\b/i.test(schoolData?.name || "");
+    if (!isDemoSchool) {
+      throw new Error("Demo results can only be generated for a designated demo school.");
+    }
+    await this.requireFeature(scopedSchoolId, "attendance");
+    await this.requireFeature(scopedSchoolId, "basic_exam_reports");
+    const config = await this.getSchoolConfig(scopedSchoolId);
+    const termMatch = String(config.currentTerm || "").match(/[1-3]/);
+    const term = Number(termMatch?.[0] || CURRENT_TERM) as 1 | 2 | 3;
+    const academicYear = config.academicYear || ACADEMIC_YEAR;
+    const activeStudents = students.filter((student) => student.studentStatus !== "stopped");
+    const studentsByClass = activeStudents.reduce<Record<string, Student[]>>((groups, student) => {
+      (groups[student.classId] ||= []).push(student);
+      return groups;
+    }, {});
+
+    const hash = (value: string) => {
+      let result = 2166136261;
+      for (let index = 0; index < value.length; index += 1) {
+        result = Math.imul(result ^ value.charCodeAt(index), 16777619);
+      }
+      return Math.abs(result);
+    };
+    const schoolDays: string[] = [];
+    const cursor = new Date();
+    cursor.setDate(cursor.getDate() - 1);
+    while (schoolDays.length < 30) {
+      const day = cursor.getDay();
+      if (day !== 0 && day !== 6) schoolDays.unshift(cursor.toISOString().slice(0, 10));
+      cursor.setDate(cursor.getDate() - 1);
+    }
+
+    onProgress?.(2, "Checking existing demo records...");
+    const [attendanceSnap, assessmentSnap] = await Promise.all([
+      getDocs(query(collection(firestore, "attendance"), where("schoolId", "==", scopedSchoolId))),
+      getDocs(query(collection(firestore, "assessments"), where("schoolId", "==", scopedSchoolId))),
+    ]);
+    const existingAttendanceIds = new Set(attendanceSnap.docs.map((item) => item.id));
+    const existingAssessmentIds = new Set(assessmentSnap.docs.map((item) => item.id));
+    const writes: Array<{ ref: ReturnType<typeof doc>; data: AttendanceRecord | Assessment }> = [];
+    let attendanceCreated = 0;
+    let assessmentsCreated = 0;
+
+    Object.entries(studentsByClass).forEach(([classId, classStudents]) => {
+      schoolDays.forEach((date) => {
+        const id = `${scopedSchoolId}_${classId}_${date}`;
+        if (existingAttendanceIds.has(id)) return;
+        const presentStudentIds = classStudents
+          .filter((student) => hash(`${student.id}_${date}`) % 100 >= 8)
+          .map((student) => student.id);
+        writes.push({
+          ref: doc(firestore, "attendance", id),
+          data: { id, schoolId: scopedSchoolId, classId, date, presentStudentIds },
+        });
+        attendanceCreated += 1;
+      });
+    });
+
+    onProgress?.(12, "Preparing realistic assessment scores...");
+    for (const [classId, classStudents] of Object.entries(studentsByClass)) {
+      const subjects = await this.getSubjects(scopedSchoolId, classId);
+      for (const student of classStudents) {
+        for (const subject of subjects) {
+          const id = `${scopedSchoolId}_${student.id}_${subject}_${term}_${academicYear}`;
+          if (existingAssessmentIds.has(id)) continue;
+          const base = hash(`${student.id}_${subject}`);
+          const testScore = 8 + (base % 8);
+          const homeworkScore = 8 + (Math.floor(base / 7) % 8);
+          const projectScore = 11 + (Math.floor(base / 13) % 10);
+          const examScore = 45 + (Math.floor(base / 19) % 51);
+          writes.push({
+            ref: doc(firestore, "assessments", id),
+            data: {
+              id,
+              schoolId: scopedSchoolId,
+              studentId: student.id,
+              classId,
+              term,
+              academicYear,
+              subject,
+              testScore,
+              homeworkScore,
+              projectScore,
+              examScore,
+              total: Math.round(testScore + homeworkScore + projectScore + examScore * 0.5),
+            },
+          });
+          assessmentsCreated += 1;
+        }
+      }
+    }
+
+    if (!writes.length) {
+      onProgress?.(100, "Demo records already exist.");
+      return { attendanceCreated, assessmentsCreated };
+    }
+    for (let start = 0; start < writes.length; start += 400) {
+      const batch = writeBatch(firestore);
+      const chunk = writes.slice(start, start + 400);
+      chunk.forEach((write) => batch.set(write.ref, write.data));
+      await batch.commit();
+      onProgress?.(
+        Math.min(100, Math.round(((start + chunk.length) / writes.length) * 88) + 12),
+        `Saving demo records (${Math.min(start + chunk.length, writes.length)} of ${writes.length})...`,
+      );
+    }
+    return { attendanceCreated, assessmentsCreated };
+  }
+
   // --- Attendance ---
   async getAttendance(
     schoolId?: string,

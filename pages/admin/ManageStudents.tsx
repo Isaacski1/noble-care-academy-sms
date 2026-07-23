@@ -29,12 +29,77 @@ import {
   XCircle,
   ArrowUpRight,
   FileText,
+  Upload,
+  Download,
+  Sparkles,
 } from "lucide-react";
+
+type StudentImportRow = Partial<Student> & {
+  rowNumber: number;
+  error?: string;
+  duplicateStudent?: Student;
+  duplicateAction?: "replace" | "skip";
+};
+
+const normalizePhone = (phone: string) => {
+  if (!phone) return "";
+  const cleaned = String(phone).trim().replace(/\s+/g, "");
+  if (cleaned.startsWith("+")) return cleaned;
+  return cleaned.startsWith("0")
+    ? `+233${cleaned.substring(1)}`
+    : `+233${cleaned}`;
+};
+
+const normalizeHeader = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+
+const IMPORT_COLUMNS: Array<[keyof Student, string, string[]]> = [
+  ["name", "Student Full Name", ["name", "studentname", "studentfullname", "fullname"]],
+  ["gender", "Gender", ["gender", "sex"]],
+  ["dob", "Date of Birth", ["dob", "dateofbirth", "birthdate"]],
+  ["classId", "Assigned Class", ["class", "assignedclass", "classname", "classid", "grade"]],
+  ["homeTown", "Home Town", ["hometown"]],
+  ["region", "Region", ["region"]],
+  ["languagesSpoken", "Language(s) Spoken", ["languagespoken", "languagesspoken", "language"]],
+  ["previousSchool", "Previous School", ["previousschool", "formerschool"]],
+  ["reasonForLeaving", "Reason(s) for Leaving", ["reasonforleaving", "reasonsforleaving"]],
+  ["dateOfLastAttendance", "Date of Last Attendance", ["dateoflastattendance", "lastattendancedate"]],
+  ["residentialAddress", "Residential Address", ["residentialaddress", "address"]],
+  ["digitalAddress", "G.P.A Address", ["gpaaddress", "digitaladdress", "ghanaaddress", "gpsaddress"]],
+  ["chronicDisease", "Any Chronic Disease", ["anychronicdisease", "chronicdisease", "medicalcondition"]],
+  ["guardianName", "Guardian Name", ["guardianname", "parentname"]],
+  ["guardianPhone", "Guardian Telephone", ["guardiantelephone", "guardianphone", "parentphone", "contact"]],
+  ["guardianEmail", "Guardian Email", ["guardianemail", "parentemail"]],
+  ["guardianOccupation", "Guardian Occupation", ["guardianoccupation"]],
+  ["guardianEducation", "Guardian Education", ["guardianeducation"]],
+  ["guardianAddress", "Guardian Address", ["guardianaddress"]],
+  ["guardianWhatsApp", "Guardian WhatsApp", ["guardianwhatsapp"]],
+  ["fatherName", "Father's Name", ["fathersname", "fathername"]],
+  ["fatherOccupation", "Father Occupation", ["fatheroccupation", "fathersoccupation"]],
+  ["fatherPhone", "Father Telephone", ["fathertelephone", "fatherstelephone", "fatherphone"]],
+  ["fatherWhatsApp", "Father WhatsApp", ["fatherwhatsapp", "fatherswhatsapp"]],
+  ["fatherEmail", "Father Email", ["fatheremail", "fathersemail"]],
+  ["fatherEducation", "Father Education", ["fathereducation", "fatherseducation"]],
+  ["fatherAddress", "Father Address", ["fatheraddress", "fathersaddress"]],
+  ["motherName", "Mother's Name", ["mothersname", "mothername"]],
+  ["motherOccupation", "Mother Occupation", ["motheroccupation", "mothersoccupation"]],
+  ["motherPhone", "Mother Telephone", ["mothertelephone", "motherstelephone", "motherphone"]],
+  ["motherWhatsApp", "Mother WhatsApp", ["motherwhatsapp", "motherswhatsapp"]],
+  ["motherEmail", "Mother Email", ["motheremail", "mothersemail"]],
+  ["motherEducation", "Mother Education", ["mothereducation", "motherseducation"]],
+  ["motherAddress", "Mother Address", ["motheraddress", "mothersaddress"]],
+];
 
 const ManageStudents = () => {
   const { school } = useSchool();
   const { user } = useAuth();
   const schoolId = school?.id || null;
+  const isDemoSchool =
+    school?.isDemo === true || /\bdemo\b/i.test(school?.name || "");
 
   const { classes: availableClasses, allClasses, getClassName } = useSchoolClasses();
   const defaultClassId = availableClasses[0]?.id || "c_p1";
@@ -45,6 +110,8 @@ const ManageStudents = () => {
   const [students, setStudents] = useState<Student[]>([]);
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [filterClass, setFilterClass] = useState("all");
+  const [studentPage, setStudentPage] = useState(1);
+  const studentsPerPage = 50;
 
   // Edit/Add State
   const [showModal, setShowModal] = useState(false);
@@ -108,6 +175,16 @@ const ManageStudents = () => {
   const [promotionLoading, setPromotionLoading] = useState(false);
   const [selectedPromoteIds, setSelectedPromoteIds] = useState<string[]>([]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importRows, setImportRows] = useState<StudentImportRow[]>([]);
+  const [importFileName, setImportFileName] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState(0);
+  const [importCompletedCount, setImportCompletedCount] = useState(0);
+  const [importTotalCount, setImportTotalCount] = useState(0);
+  const [isGeneratingDemo, setIsGeneratingDemo] = useState(false);
+  const [demoProgress, setDemoProgress] = useState(0);
+  const [demoProgressMessage, setDemoProgressMessage] = useState("");
 
   const compressImageToBase64 = (file: File, maxPx = 300, quality = 0.75): Promise<string> =>
     new Promise((resolve, reject) => {
@@ -141,6 +218,269 @@ const ManageStudents = () => {
     }
   };
 
+  const closeImportModal = () => {
+    if (isImporting) return;
+    setShowImportModal(false);
+    setImportRows([]);
+    setImportFileName("");
+    setImportProgress(0);
+    setImportCompletedCount(0);
+    setImportTotalCount(0);
+  };
+
+  const setDuplicateAction = (
+    action: "replace" | "skip",
+    rowNumber?: number,
+  ) => {
+    setImportRows((current) =>
+      current.map((row) =>
+        row.duplicateStudent && (rowNumber == null || row.rowNumber === rowNumber)
+          ? { ...row, duplicateAction: action }
+          : row,
+      ),
+    );
+  };
+
+  const downloadImportTemplate = async () => {
+    const XLSX = await import("xlsx");
+    const sampleClass = availableClasses[0]?.name || "Primary 1";
+    const worksheet = XLSX.utils.json_to_sheet([
+      {
+        "Student Name": "Ama Mensah",
+        Gender: "Female",
+        "Date of Birth": "2015-06-20",
+        Class: sampleClass,
+        "Home Town": "Kumasi",
+        Region: "Ashanti",
+        "Residential Address": "Adum, Kumasi",
+        "Digital Address": "AK-000-0000",
+        "Guardian Name": "Kwame Mensah",
+        "Guardian Phone": "0240000000",
+        "Guardian Email": "",
+        "Father Name": "",
+        "Father Phone": "",
+        "Mother Name": "",
+        "Mother Phone": "",
+      },
+    ]);
+    worksheet["!cols"] = IMPORT_COLUMNS.map(() => ({ wch: 22 }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Students");
+    XLSX.writeFile(workbook, "student-import-template.xlsx");
+  };
+
+  const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
+        defval: "",
+        raw: false,
+        dateNF: "yyyy-mm-dd",
+      });
+      if (!rawRows.length) throw new Error("The first sheet has no student rows.");
+
+      const classLookup = new Map<string, string>();
+      allClasses.forEach((classRoom) => {
+        classLookup.set(normalizeHeader(classRoom.id), classRoom.id);
+        classLookup.set(normalizeHeader(classRoom.name), classRoom.id);
+      });
+
+      const parsed = rawRows.map((raw, index): StudentImportRow => {
+        const normalized = Object.entries(raw).reduce<Record<string, string>>((result, [key, value]) => {
+          result[normalizeHeader(key)] = String(value ?? "").trim();
+          return result;
+        }, {});
+        const row: StudentImportRow = { rowNumber: index + 2 };
+        IMPORT_COLUMNS.forEach(([field, , aliases]) => {
+          const value = aliases.map((alias) => normalized[alias]).find(Boolean) || "";
+          (row as any)[field] = value;
+        });
+
+        row.name = String(row.name || "").trim();
+        const gender = String(row.gender || "").toLowerCase();
+        row.gender = gender.startsWith("f") ? "Female" : gender.startsWith("m") ? "Male" : undefined;
+        const suppliedClass = String(row.classId || "");
+        row.classId = classLookup.get(normalizeHeader(suppliedClass)) || "";
+        row.dob = String(row.dob || "");
+        row.guardianPhone = normalizePhone(String(row.guardianPhone || ""));
+        row.guardianWhatsApp = normalizePhone(String(row.guardianWhatsApp || ""));
+        row.fatherPhone = normalizePhone(String(row.fatherPhone || ""));
+        row.fatherWhatsApp = normalizePhone(String(row.fatherWhatsApp || ""));
+        row.motherPhone = normalizePhone(String(row.motherPhone || ""));
+        row.motherWhatsApp = normalizePhone(String(row.motherWhatsApp || ""));
+
+        const errors: string[] = [];
+        if (!row.name) errors.push("student name is missing");
+        if (!row.gender) errors.push("gender must be Male or Female");
+        if (!row.classId) errors.push(`class '${suppliedClass || "blank"}' was not found`);
+        row.error = errors.join("; ") || undefined;
+        if (!row.error) {
+          const normalizedName = normalizeHeader(row.name || "");
+          row.duplicateStudent = students.find((student) => {
+            if (normalizeHeader(student.name) !== normalizedName) return false;
+            const sameDob = Boolean(row.dob && student.dob && row.dob === student.dob);
+            const sameClassWithoutDob = Boolean(!row.dob && student.classId === row.classId);
+            return sameDob || sameClassWithoutDob;
+          });
+        }
+        return row;
+      });
+
+      setImportFileName(file.name);
+      setImportRows(parsed);
+      setImportProgress(0);
+      setImportCompletedCount(0);
+      setImportTotalCount(0);
+      setShowImportModal(true);
+    } catch (error) {
+      console.error("Student spreadsheet read failed", error);
+      showToast((error as Error).message || "Could not read the spreadsheet.", { type: "error" });
+    }
+  };
+
+  const importStudents = async () => {
+    if (!schoolId) return;
+    const undecidedDuplicates = importRows.filter(
+      (row) => row.duplicateStudent && !row.duplicateAction,
+    );
+    if (undecidedDuplicates.length) {
+      showToast("Choose Replace or Skip for every duplicate student first.", { type: "error" });
+      return;
+    }
+    const validRows = importRows.filter(
+      (row) => !row.error && row.duplicateAction !== "skip",
+    );
+    if (!validRows.length) {
+      showToast("There are no students selected to import.", { type: "info" });
+      return;
+    }
+
+    const limit = Number(school?.limits?.maxStudents || 0);
+    const used = Number(school?.studentsCount ?? students.length);
+    const newStudentCount = validRows.filter((row) => !row.duplicateStudent).length;
+    if (limit > 0 && used + newStudentCount > limit) {
+      showToast(`Your plan has room for ${Math.max(limit - used, 0)} more students, but this import would add ${newStudentCount}.`, { type: "error" });
+      return;
+    }
+
+    setIsImporting(true);
+    setImportProgress(0);
+    setImportCompletedCount(0);
+    setImportTotalCount(validRows.length);
+    let imported = 0;
+    let replaced = 0;
+    const importedRowNumbers = new Set<number>();
+    try {
+      for (const row of validRows) {
+        const {
+          rowNumber: _rowNumber,
+          error: _error,
+          duplicateStudent: _duplicateStudent,
+          duplicateAction: _duplicateAction,
+          ...fields
+        } = row;
+        const existingStudent = row.duplicateStudent;
+        const student: Student = {
+          ...(existingStudent || {}),
+          ...(fields as Student),
+          id: existingStudent?.id || crypto.randomUUID?.() || Math.random().toString(36).slice(2, 11),
+          schoolId,
+          name: row.name!,
+          gender: row.gender!,
+          dob: row.dob || "",
+          classId: row.classId!,
+          guardianName: row.guardianName || "",
+          guardianPhone: row.guardianPhone || "",
+          studentStatus: existingStudent?.studentStatus || "active",
+          createdAt: existingStudent?.createdAt || Date.now(),
+        };
+        if (existingStudent) {
+          await db.updateStudent(student);
+          replaced += 1;
+        } else {
+          await db.addStudent(student);
+        }
+        imported += 1;
+        importedRowNumbers.add(row.rowNumber);
+        setImportCompletedCount(imported);
+        setImportProgress(Math.round((imported / validRows.length) * 100));
+      }
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "students_imported",
+        entityId: schoolId,
+        meta: {
+          status: "success",
+          module: "Students",
+          importedCount: imported,
+          addedCount: imported - replaced,
+          replacedCount: replaced,
+          skippedCount: importRows.filter((row) => row.duplicateAction === "skip").length,
+          fileName: importFileName,
+          actorName: user?.fullName || "",
+        },
+      });
+      setImportProgress(100);
+      showToast(`${imported - replaced} students added and ${replaced} replaced successfully.`, { type: "success" });
+      await new Promise((resolve) => window.setTimeout(resolve, 700));
+      setIsImporting(false);
+      closeImportModal();
+      await fetchData();
+    } catch (error) {
+      console.error("Student import failed", error);
+      setImportRows((current) => current.filter((row) => !importedRowNumbers.has(row.rowNumber)));
+      showToast(`Imported ${imported} students before an error occurred. Please try the remaining rows.`, { type: "error" });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const generateDemoResults = async () => {
+    if (!schoolId || !school || !isDemoSchool || students.length === 0) return;
+    const confirmed = window.confirm(
+      `Generate demo attendance and assessment results only for ${school.name || "this school"} and its ${students.length} students? Existing records will be kept.`,
+    );
+    if (!confirmed) return;
+    setIsGeneratingDemo(true);
+    setDemoProgress(0);
+    setDemoProgressMessage("Preparing demo records...");
+    try {
+      const result = await db.generateDemoAcademicData(
+        schoolId,
+        students,
+        (percent, message) => {
+          setDemoProgress(percent);
+          setDemoProgressMessage(message);
+        },
+      );
+      setDemoProgress(100);
+      setDemoProgressMessage("Demo results are ready.");
+      await logActivity({
+        schoolId,
+        actorUid: user?.id || null,
+        actorRole: user?.role || null,
+        eventType: "demo_academic_data_generated",
+        entityId: schoolId,
+        meta: { status: "success", module: "Students", ...result, actorName: user?.fullName || "" },
+      });
+      showToast(`Demo ready: ${result.attendanceCreated} attendance days and ${result.assessmentsCreated} assessments created.`, { type: "success" });
+      await new Promise((resolve) => window.setTimeout(resolve, 900));
+    } catch (error) {
+      console.error("Demo result generation failed", error);
+      showToast("Could not generate demo results. Please check the school plan and try again.", { type: "error" });
+    } finally {
+      setIsGeneratingDemo(false);
+    }
+  };
+
   const fetchData = async () => {
     if (!schoolId) {
       setStudents([]);
@@ -157,7 +497,7 @@ const ManageStudents = () => {
       while (hasMore && safetyCounter < 500) {
         const page = await db.getStudentsPage({
           schoolId,
-          pageSize: 250,
+          pageSize: 300,
           cursorId,
         });
         data.push(...page.items);
@@ -238,6 +578,22 @@ const ManageStudents = () => {
   const filteredStudents = students
     .filter((s) => (filterClass === "all" ? true : s.classId === filterClass))
     .sort((a, b) => a.name.localeCompare(b.name));
+  const studentPageCount = Math.max(
+    1,
+    Math.ceil(filteredStudents.length / studentsPerPage),
+  );
+  const visibleStudents = filteredStudents.slice(
+    (studentPage - 1) * studentsPerPage,
+    studentPage * studentsPerPage,
+  );
+
+  useEffect(() => {
+    setStudentPage(1);
+  }, [filterClass, schoolId]);
+
+  useEffect(() => {
+    if (studentPage > studentPageCount) setStudentPage(studentPageCount);
+  }, [studentPage, studentPageCount]);
 
   const classLabel =
     filterClass === "all"
@@ -581,16 +937,6 @@ const ManageStudents = () => {
 
     setIsSaving(true);
     try {
-      const normalizePhone = (p: string) => {
-        if (!p) return "";
-        let cleaned = p.trim().replace(/\s+/g, "");
-        if (!cleaned.startsWith("+")) {
-          if (cleaned.startsWith("0")) cleaned = "+233" + cleaned.substring(1);
-          else cleaned = "+233" + cleaned;
-        }
-        return cleaned;
-      };
-
       if (editingId) {
         const updatedStudent: Student = {
           ...(formData as Student),
@@ -809,6 +1155,40 @@ const ManageStudents = () => {
                     </div>
                   );
                 })}
+                {studentPageCount > 1 && (
+                  <div className="col-span-full mt-2 flex flex-col items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 sm:flex-row">
+                    <p className="text-sm text-slate-500">
+                      Showing {(studentPage - 1) * studentsPerPage + 1}–
+                      {Math.min(studentPage * studentsPerPage, filteredStudents.length)} of{" "}
+                      {filteredStudents.length} students
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setStudentPage((page) => Math.max(1, page - 1))}
+                        disabled={studentPage === 1}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Previous
+                      </button>
+                      <span className="px-2 text-sm font-medium text-slate-600">
+                        Page {studentPage} of {studentPageCount}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setStudentPage((page) =>
+                            Math.min(studentPageCount, page + 1),
+                          )
+                        }
+                        disabled={studentPage === studentPageCount}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="mt-3 flex justify-center gap-4 text-[11px] text-slate-500">
@@ -882,6 +1262,35 @@ const ManageStudents = () => {
               </select>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {isDemoSchool && (
+                <button
+                  type="button"
+                  onClick={generateDemoResults}
+                  disabled={isGeneratingDemo || students.length === 0}
+                  className="flex items-center justify-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 shadow-sm transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Sparkles size={16} />
+                  Generate Demo Results
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={downloadImportTemplate}
+                className="flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white text-slate-700 px-4 py-2 text-sm font-semibold shadow-sm transition hover:bg-slate-50"
+              >
+                <Download size={16} />
+                Template
+              </button>
+              <label className="flex cursor-pointer items-center justify-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 px-5 py-2 text-sm font-semibold shadow-sm transition hover:bg-indigo-100">
+                <Upload size={16} />
+                Import Excel
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  onChange={handleImportFile}
+                />
+              </label>
               <button
                 onClick={handleOpenPromotion}
                 className="flex items-center justify-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 px-5 py-2 text-sm font-semibold shadow-sm transition hover:scale-[1.01] hover:bg-emerald-100"
@@ -912,7 +1321,7 @@ const ManageStudents = () => {
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-                {filteredStudents.map((student) => {
+                {visibleStudents.map((student) => {
                   const className =
                     availableClasses.find((c) => c.id === student.classId)?.name ||
                     student.classId;
@@ -1761,6 +2170,134 @@ const ManageStudents = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {isGeneratingDemo && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" role="status" aria-live="polite">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="rounded-xl bg-violet-100 p-3 text-violet-700"><Sparkles size={24} /></div>
+              <div><h2 className="text-lg font-bold text-slate-900">Generating demo results</h2><p className="text-sm text-slate-500">Only {school?.name || "the current school"} is being updated.</p></div>
+            </div>
+            <div className="mb-2 flex items-center justify-between"><span className="text-sm text-slate-600">{demoProgressMessage}</span><strong className="text-xl tabular-nums text-violet-700">{demoProgress}%</strong></div>
+            <div className="h-3 overflow-hidden rounded-full bg-violet-100" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={demoProgress}>
+              <div className="h-full rounded-full bg-violet-600 transition-[width] duration-300" style={{ width: `${demoProgress}%` }} />
+            </div>
+            <p className="mt-3 text-xs text-slate-500">Please keep this page open. Existing attendance and assessment records will not be replaced.</p>
+          </div>
+        </div>
+      )}
+
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between border-b border-slate-100 bg-gradient-to-r from-indigo-50 to-white p-6">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">Import students from Excel</h2>
+                <p className="mt-1 text-sm text-slate-500">Review {importFileName} before adding students.</p>
+              </div>
+              <button type="button" onClick={closeImportModal} className="rounded-full p-2 text-slate-400 hover:bg-white hover:text-slate-700"><X size={22} /></button>
+            </div>
+            <div className="overflow-y-auto p-6">
+              {isImporting && (
+                <div className="mb-5 rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4" role="status" aria-live="polite">
+                  <div className="mb-2 flex items-center justify-between gap-4">
+                    <div>
+                      <p className="font-semibold text-indigo-900">Importing students...</p>
+                      <p className="text-xs text-indigo-700">
+                        {importCompletedCount} of {importTotalCount} students saved
+                      </p>
+                    </div>
+                    <span className="text-2xl font-bold tabular-nums text-indigo-700">{importProgress}%</span>
+                  </div>
+                  <div
+                    className="h-3 overflow-hidden rounded-full bg-indigo-100"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={importProgress}
+                    aria-label="Student import progress"
+                  >
+                    <div
+                      className="h-full rounded-full bg-indigo-600 transition-[width] duration-300 ease-out"
+                      style={{ width: `${importProgress}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-indigo-600">Please keep this window open until the import reaches 100%.</p>
+                </div>
+              )}
+              <div className="mb-4 grid grid-cols-2 gap-3 text-center text-sm sm:grid-cols-4">
+                <div className="rounded-xl bg-slate-50 p-3"><strong className="block text-xl text-slate-800">{importRows.length}</strong>Total rows</div>
+                <div className="rounded-xl bg-emerald-50 p-3 text-emerald-700"><strong className="block text-xl">{importRows.filter((row) => !row.error && !row.duplicateStudent).length}</strong>New students</div>
+                <div className="rounded-xl bg-amber-50 p-3 text-amber-700"><strong className="block text-xl">{importRows.filter((row) => row.duplicateStudent).length}</strong>Duplicates</div>
+                <div className="rounded-xl bg-rose-50 p-3 text-rose-700"><strong className="block text-xl">{importRows.filter((row) => row.error).length}</strong>Need correction</div>
+              </div>
+              {importRows.some((row) => row.duplicateStudent) && (
+                <div className="mb-4 flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="font-semibold text-amber-900">Existing students were found</p>
+                    <p className="text-xs text-amber-700">Replace updates their admission details while keeping their existing history. Skip leaves them unchanged.</p>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <button type="button" disabled={isImporting} onClick={() => setDuplicateAction("replace")} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50">Replace all duplicates</button>
+                    <button type="button" disabled={isImporting} onClick={() => setDuplicateAction("skip")} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50">Skip all duplicates</button>
+                  </div>
+                </div>
+              )}
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full min-w-[680px] text-left text-sm">
+                  <thead className="bg-slate-50 text-slate-600"><tr><th className="px-4 py-3">Row</th><th className="px-4 py-3">Student</th><th className="px-4 py-3">Gender</th><th className="px-4 py-3">Class</th><th className="px-4 py-3">Status</th></tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {importRows.map((row) => (
+                      <tr key={row.rowNumber} className={row.error ? "bg-rose-50/40" : row.duplicateStudent ? "bg-amber-50/50" : ""}>
+                        <td className="px-4 py-3 text-slate-500">{row.rowNumber}</td>
+                        <td className="px-4 py-3 font-medium text-slate-800">{row.name || "—"}</td>
+                        <td className="px-4 py-3">{row.gender || "—"}</td>
+                        <td className="px-4 py-3">{row.classId ? getClassName(row.classId) : "—"}</td>
+                        <td className={`px-4 py-3 text-xs ${row.error ? "text-rose-700" : row.duplicateStudent ? "text-amber-800" : "text-emerald-700"}`}>
+                          {row.error ? row.error : row.duplicateStudent ? (
+                            <div className="space-y-1.5">
+                              <p>Already exists: {row.duplicateStudent.name}</p>
+                              <select
+                                value={row.duplicateAction || ""}
+                                disabled={isImporting}
+                                onChange={(event) => setDuplicateAction(event.target.value as "replace" | "skip", row.rowNumber)}
+                                className="rounded-lg border border-amber-300 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                                aria-label={`Duplicate action for ${row.name}`}
+                              >
+                                <option value="">Choose action...</option>
+                                <option value="replace">Replace existing</option>
+                                <option value="skip">Skip this student</option>
+                              </select>
+                            </div>
+                          ) : "Ready to import"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {importRows.some((row) => row.error) && <p className="mt-3 text-xs text-rose-600">Correct invalid rows in the spreadsheet and choose Import Excel again. Valid rows can still be imported now.</p>}
+            </div>
+            <div className="flex justify-end gap-3 border-t border-slate-100 bg-slate-50 p-4">
+              <button type="button" onClick={closeImportModal} disabled={isImporting} className="rounded-lg px-5 py-2.5 font-medium text-slate-600 hover:bg-slate-200">Cancel</button>
+              <button
+                type="button"
+                onClick={importStudents}
+                disabled={
+                  isImporting ||
+                  !importRows.some((row) => !row.error && row.duplicateAction !== "skip") ||
+                  importRows.some((row) => row.duplicateStudent && !row.duplicateAction)
+                }
+                className="rounded-lg bg-indigo-600 px-5 py-2.5 font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isImporting
+                  ? "Importing..."
+                  : `Import ${importRows.filter((row) => !row.error && row.duplicateAction !== "skip").length} students`}
+              </button>
+            </div>
           </div>
         </div>
       )}
