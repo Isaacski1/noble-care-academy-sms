@@ -67,6 +67,8 @@ service cloud.firestore {
     function hasCurrentSubscription(schoolId) {
       let school = get(/databases/$(database)/documents/schools/$(schoolId)).data;
       return school.get('plan', '') == 'free' ||
+        school.get('trialVacationPaused', false) == true ||
+        school.get('subscriptionVacationPaused', false) == true ||
         !school.keys().hasAny(['planEndsAt']) ||
         !(school.planEndsAt is timestamp) ||
         request.time < school.planEndsAt + duration.value(7, 'd');

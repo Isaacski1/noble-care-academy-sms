@@ -176,6 +176,8 @@ const addPlanMonths = (baseDate: Date | null, plan?: string) => {
 
 const isSchoolAccessPaused = (school: any) => {
   if (!school || school.plan === "free") return false;
+  if (school.trialVacationPaused === true) return false;
+  if (school.subscriptionVacationPaused === true) return false;
   const plan = school.plan || "monthly";
   const explicitEndsAt = normalizePlanDate(school.planEndsAt);
   const lastPaymentAt = normalizePlanDate(school.billing?.lastPaymentAt);

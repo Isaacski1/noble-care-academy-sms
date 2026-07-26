@@ -22,6 +22,10 @@ import {
   createSchool,
   deleteSchool,
   getSuperAdminSchoolsPage,
+  getSubscriptionVacationSettings,
+  getTrialVacationSettings,
+  setSubscriptionVacationMode,
+  setTrialVacationMode,
   updateSchoolPlan,
 } from "../../services/backendApi";
 import { clearClientCache, resolveClientCache } from "../../services/clientCache";
@@ -79,6 +83,21 @@ const Schools = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [schoolToDelete, setSchoolToDelete] = useState<School | null>(null);
   const [isCreatingSchool, setIsCreatingSchool] = useState(false);
+  const [vacationModeActive, setVacationModeActive] = useState(false);
+  const [vacationStartedAt, setVacationStartedAt] = useState<number | null>(null);
+  const [vacationModeLoading, setVacationModeLoading] = useState(true);
+  const [vacationModeSaving, setVacationModeSaving] = useState(false);
+  const [showVacationConfirm, setShowVacationConfirm] = useState<
+    "trial" | "subscription" | null
+  >(null);
+  const [subscriptionVacationActive, setSubscriptionVacationActive] =
+    useState(false);
+  const [subscriptionVacationStartedAt, setSubscriptionVacationStartedAt] =
+    useState<number | null>(null);
+  const [subscriptionVacationLoading, setSubscriptionVacationLoading] =
+    useState(true);
+  const [subscriptionVacationSaving, setSubscriptionVacationSaving] =
+    useState(false);
   const [isDeletingSchool, setIsDeletingSchool] = useState(false);
   const [isSavingPlan, setIsSavingPlan] = useState(false);
   const [deletingPlanId, setDeletingPlanId] = useState<string | null>(null);
@@ -174,6 +193,90 @@ const Schools = () => {
     }
   };
 
+  const loadVacationMode = async () => {
+    setVacationModeLoading(true);
+    try {
+      const result = await getTrialVacationSettings();
+      setVacationModeActive(result.active);
+      setVacationStartedAt(result.startedAt);
+    } catch (error: any) {
+      console.error("Failed to load vacation mode", error);
+      showToast(error?.message || "Failed to load vacation mode.", {
+        type: "error",
+      });
+    } finally {
+      setVacationModeLoading(false);
+    }
+  };
+
+  const loadSubscriptionVacationMode = async () => {
+    setSubscriptionVacationLoading(true);
+    try {
+      const result = await getSubscriptionVacationSettings();
+      setSubscriptionVacationActive(result.active);
+      setSubscriptionVacationStartedAt(result.startedAt);
+    } catch (error: any) {
+      console.error("Failed to load subscription vacation mode", error);
+      showToast(error?.message || "Failed to load subscription vacation mode.", {
+        type: "error",
+      });
+    } finally {
+      setSubscriptionVacationLoading(false);
+    }
+  };
+
+  const toggleVacationMode = async () => {
+    const nextActive = !vacationModeActive;
+    setVacationModeSaving(true);
+    try {
+      const result = await setTrialVacationMode(nextActive);
+      setVacationModeActive(result.active);
+      setVacationStartedAt(result.active ? result.startedAt || Date.now() : null);
+      clearSuperAdminCaches();
+      await loadFirstSchoolsPage(true);
+      showToast(
+        result.active
+          ? `Vacation mode activated. ${result.updatedSchools || 0} trial countdowns paused.`
+          : `Vacation mode deactivated. ${result.updatedSchools || 0} trial countdowns resumed.`,
+        { type: "success" },
+      );
+    } catch (error: any) {
+      console.error("Failed to update vacation mode", error);
+      showToast(error?.message || "Failed to update vacation mode.", {
+        type: "error",
+      });
+    } finally {
+      setVacationModeSaving(false);
+    }
+  };
+
+  const toggleSubscriptionVacationMode = async () => {
+    const nextActive = !subscriptionVacationActive;
+    setSubscriptionVacationSaving(true);
+    try {
+      const result = await setSubscriptionVacationMode(nextActive);
+      setSubscriptionVacationActive(result.active);
+      setSubscriptionVacationStartedAt(
+        result.active ? result.startedAt || Date.now() : null,
+      );
+      clearSuperAdminCaches();
+      await loadFirstSchoolsPage(true);
+      showToast(
+        result.active
+          ? `Paid-plan vacation activated. ${result.updatedSchools || 0} subscription countdowns paused.`
+          : `Paid-plan vacation ended. ${result.updatedSchools || 0} subscription countdowns resumed.`,
+        { type: "success" },
+      );
+    } catch (error: any) {
+      console.error("Failed to update subscription vacation mode", error);
+      showToast(error?.message || "Failed to update subscription vacation mode.", {
+        type: "error",
+      });
+    } finally {
+      setSubscriptionVacationSaving(false);
+    }
+  };
+
   const SCHOOLS_CACHE_KEY = "super_admin_schools_page_1_v1";
   const DASHBOARD_CACHE_KEY = "super_admin_dashboard_overview_v1";
   const ANALYTICS_CACHE_KEY = "super_admin_analytics_overview_v1";
@@ -258,6 +361,8 @@ const Schools = () => {
     const loadInitial = async () => {
       await Promise.all([
         loadPlans(),
+        loadVacationMode(),
+        loadSubscriptionVacationMode(),
         loadUserRole(),
         loadFirstSchoolsPage(false),
         loadSpecialPricingCount(),
@@ -686,6 +791,110 @@ const Schools = () => {
           </div>
         </div>
 
+        <div
+          className={`mb-8 rounded-2xl border p-5 ${
+            vacationModeActive
+              ? "border-amber-300 bg-amber-50"
+              : "border-slate-200 bg-white"
+          }`}
+        >
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="font-bold text-slate-900">School Vacation Mode</h2>
+                <span
+                  className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                    vacationModeActive
+                      ? "bg-amber-200 text-amber-900"
+                      : "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {vacationModeLoading
+                    ? "Loading..."
+                    : vacationModeActive
+                      ? "Active"
+                      : "Inactive"}
+                </span>
+              </div>
+              <p className="mt-1 text-sm text-slate-600">
+                {vacationModeActive
+                  ? `Free-trial countdowns are paused${vacationStartedAt ? ` since ${new Date(vacationStartedAt).toLocaleDateString()}` : ""}. New trial schools are paused automatically.`
+                  : "Free-trial countdowns are running normally."}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowVacationConfirm("trial")}
+              disabled={vacationModeLoading || vacationModeSaving}
+              className={`rounded-lg px-4 py-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 ${
+                vacationModeActive
+                  ? "bg-slate-700 hover:bg-slate-800"
+                  : "bg-amber-600 hover:bg-amber-700"
+              }`}
+            >
+              {vacationModeSaving
+                ? "Updating..."
+                : vacationModeActive
+                  ? "End Vacation & Resume Trials"
+                  : "Start Vacation & Pause Trials"}
+            </button>
+          </div>
+        </div>
+
+        <div
+          className={`mb-8 rounded-2xl border p-5 ${
+            subscriptionVacationActive
+              ? "border-blue-300 bg-blue-50"
+              : "border-slate-200 bg-white"
+          }`}
+        >
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="font-bold text-slate-900">
+                  Paid Subscription Vacation
+                </h2>
+                <span
+                  className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                    subscriptionVacationActive
+                      ? "bg-blue-200 text-blue-900"
+                      : "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {subscriptionVacationLoading
+                    ? "Loading..."
+                    : subscriptionVacationActive
+                      ? "Active"
+                      : "Inactive"}
+                </span>
+              </div>
+              <p className="mt-1 text-sm text-slate-600">
+                {subscriptionVacationActive
+                  ? `Monthly, termly and yearly countdowns are paused${subscriptionVacationStartedAt ? ` since ${new Date(subscriptionVacationStartedAt).toLocaleDateString()}` : ""}. Free trials are controlled separately.`
+                  : "Monthly, termly and yearly subscription countdowns are running normally."}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowVacationConfirm("subscription")}
+              disabled={
+                subscriptionVacationLoading || subscriptionVacationSaving
+              }
+              className={`rounded-lg px-4 py-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 ${
+                subscriptionVacationActive
+                  ? "bg-slate-700 hover:bg-slate-800"
+                  : "bg-[#0B4A82] hover:bg-[#083a68]"
+              }`}
+            >
+              {subscriptionVacationSaving
+                ? "Updating..."
+                : subscriptionVacationActive
+                  ? "Resume Paid Subscriptions"
+                  : "Pause Paid Subscriptions"}
+            </button>
+          </div>
+        </div>
+
         {/* Schools Table */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
           <div className="overflow-x-auto">
@@ -849,6 +1058,135 @@ const Schools = () => {
           )}
         </div>
       </div>
+
+      {showVacationConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="vacation-confirm-title"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              !vacationModeSaving &&
+              !subscriptionVacationSaving
+            ) {
+              setShowVacationConfirm(null);
+            }
+          }}
+        >
+          <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div
+              className={`px-6 py-5 ${
+                (showVacationConfirm === "subscription"
+                  ? subscriptionVacationActive
+                  : vacationModeActive)
+                  ? "bg-slate-800"
+                  : showVacationConfirm === "subscription"
+                    ? "bg-[#0B4A82]"
+                    : "bg-amber-500"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-widest text-white/75">
+                    School Manager GH
+                  </p>
+                  <h2
+                    id="vacation-confirm-title"
+                    className="mt-1 text-xl font-bold text-white"
+                  >
+                    {showVacationConfirm === "subscription"
+                      ? subscriptionVacationActive
+                        ? "Resume Paid Subscriptions?"
+                        : "Pause Paid Subscriptions?"
+                      : vacationModeActive
+                        ? "Resume Free Trials?"
+                        : "Pause Free Trials?"}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Close confirmation"
+                  disabled={vacationModeSaving || subscriptionVacationSaving}
+                  onClick={() => setShowVacationConfirm(null)}
+                  className="rounded-lg p-1 text-white/80 transition hover:bg-white/15 hover:text-white disabled:opacity-50"
+                >
+                  <X size={21} />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6">
+              <p className="text-sm leading-6 text-slate-600">
+                {showVacationConfirm === "subscription"
+                  ? subscriptionVacationActive
+                    ? "Monthly, termly and yearly subscription countdowns will resume. Free trials will not be changed."
+                    : "Monthly, termly and yearly subscription countdowns will pause. Free trials will continue under their separate setting."
+                  : vacationModeActive
+                    ? "All paused free trials will resume. Paid subscriptions will not be changed."
+                    : "All active free-trial countdowns will pause immediately. Paid subscriptions will not be changed."}
+              </p>
+
+              <div
+                className={`mt-4 rounded-xl border p-4 text-sm ${
+                  (showVacationConfirm === "subscription"
+                    ? subscriptionVacationActive
+                    : vacationModeActive)
+                    ? "border-blue-200 bg-blue-50 text-blue-800"
+                    : "border-amber-200 bg-amber-50 text-amber-900"
+                }`}
+              >
+                {(showVacationConfirm === "subscription"
+                  ? subscriptionVacationActive
+                  : vacationModeActive)
+                  ? "The paused vacation duration will be added back to every affected end date."
+                  : "Schools keep access while their selected countdown is paused."}
+              </div>
+
+              <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  disabled={vacationModeSaving || subscriptionVacationSaving}
+                  onClick={() => setShowVacationConfirm(null)}
+                  className="rounded-lg border border-slate-300 px-4 py-2.5 font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={vacationModeSaving || subscriptionVacationSaving}
+                  onClick={async () => {
+                    if (showVacationConfirm === "subscription") {
+                      await toggleSubscriptionVacationMode();
+                    } else {
+                      await toggleVacationMode();
+                    }
+                    setShowVacationConfirm(null);
+                  }}
+                  className={`rounded-lg px-4 py-2.5 font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                    (showVacationConfirm === "subscription"
+                      ? subscriptionVacationActive
+                      : vacationModeActive)
+                      ? "bg-[#0B4A82] hover:bg-[#083a68]"
+                      : "bg-amber-600 hover:bg-amber-700"
+                  }`}
+                >
+                  {vacationModeSaving || subscriptionVacationSaving
+                    ? "Updating..."
+                    : showVacationConfirm === "subscription"
+                      ? subscriptionVacationActive
+                        ? "Resume Paid Subscriptions"
+                        : "Pause Paid Subscriptions"
+                      : vacationModeActive
+                        ? "Resume Free Trials"
+                        : "Pause Free Trials"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create School Modal */}
       {showCreateModal && (

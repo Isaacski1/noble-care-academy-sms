@@ -327,6 +327,8 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
     canAccessFeature(user, school, feature);
   const subscriptionGate = useMemo(() => {
     if (!school || isFreePlan || isSuperAdmin) return null;
+    if ((school as any)?.trialVacationPaused === true) return null;
+    if ((school as any)?.subscriptionVacationPaused === true) return null;
     const normalizeDate = (raw: any) => {
       if (!raw) return null;
       if (

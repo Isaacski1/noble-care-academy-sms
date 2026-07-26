@@ -122,6 +122,7 @@ const Billing: React.FC = () => {
   const isFreePlan = billingStatus.plan === "free";
   const isTrialPlan =
     billingStatus.plan === "trial" || (school as any)?.status === "trial_active";
+  const isTrialVacationPaused = (school as any)?.trialVacationPaused === true;
   const trialEndsAt = useMemo(() => {
     const raw = (school as any)?.planEndsAt;
     if (!raw) return null;
@@ -129,7 +130,9 @@ const Billing: React.FC = () => {
     return Number.isNaN(date.getTime()) ? null : date;
   }, [school]);
   const isTrialActive = Boolean(
-    isTrialPlan && trialEndsAt && trialEndsAt.getTime() > Date.now(),
+    isTrialPlan &&
+      trialEndsAt &&
+      (isTrialVacationPaused || trialEndsAt.getTime() > Date.now()),
   );
   const specialPricing = useMemo(() => {
     const pricing = (school as any)?.billing?.specialPricing;
@@ -398,10 +401,16 @@ const Billing: React.FC = () => {
               </div>
               <div>
                 <h1 className="text-xl font-semibold text-slate-900">
-                  {isTrialActive ? "Free 30-Day Trial Active" : "Free Plan Active"}
+                  {isTrialVacationPaused
+                    ? "Free Trial Paused for School Vacation"
+                    : isTrialActive
+                      ? "Free 30-Day Trial Active"
+                      : "Free Plan Active"}
                 </h1>
                 <p className="text-sm text-slate-600 mt-1">
-                  {isTrialActive && trialEndsAt
+                  {isTrialVacationPaused
+                    ? "Your trial countdown is paused. The Super Admin will resume it when schools reopen, and you will not lose any trial days."
+                    : isTrialActive && trialEndsAt
                     ? `Your free access continues until ${trialEndsAt.toLocaleDateString()}. You can choose a paid plan when the trial ends.`
                     : "Billing is disabled for your school. Contact your super admin if you need to change your subscription."}
                 </p>

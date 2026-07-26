@@ -46,6 +46,10 @@ export interface School {
   status: "active" | "inactive" | "trial_active";
   plan: "free" | "trial" | "monthly" | "termly" | "yearly";
   planEndsAt: Date | null;
+  trialVacationPaused?: boolean;
+  trialVacationPausedAt?: Date | number | null;
+  subscriptionVacationPaused?: boolean;
+  subscriptionVacationPausedAt?: Date | number | null;
   featurePlan?: "starter" | "standard";
   createdAt: Date;
   createdBy: string;

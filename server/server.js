@@ -1551,6 +1551,34 @@ async function superAdminMiddleware(req, res, next) {
   }
 }
 
+const TRIAL_VACATION_SETTINGS_PATH = ["platformSettings", "trialVacation"];
+
+const readTrialVacationSettings = async () => {
+  const snapshot = await admin
+    .firestore()
+    .collection(TRIAL_VACATION_SETTINGS_PATH[0])
+    .doc(TRIAL_VACATION_SETTINGS_PATH[1])
+    .get();
+  const data = snapshot.exists ? snapshot.data() || {} : {};
+  const startedAt =
+    typeof data.startedAt?.toMillis === "function"
+      ? data.startedAt.toMillis()
+      : Number(data.startedAt || 0);
+  return {
+    active: data.active === true,
+    startedAt: Number.isFinite(startedAt) && startedAt > 0 ? startedAt : null,
+    updatedBy: data.updatedBy || null,
+  };
+};
+
+const buildTrialVacationFields = (settings, now = Date.now()) =>
+  settings?.active
+    ? {
+        trialVacationPaused: true,
+        trialVacationPausedAt: admin.firestore.Timestamp.fromMillis(now),
+      }
+    : {};
+
 const normalizeMfaEnforcementMode = (value, fallback = "optional") => {
   const raw = trimToString(value || fallback, 24).toLowerCase();
   return ["off", "optional", "required"].includes(raw) ? raw : fallback;
@@ -8439,6 +8467,7 @@ app.post(
 
       const now = Date.now();
       const trialEndsAt = new Date(now + 30 * 24 * 60 * 60 * 1000);
+      const trialVacationSettings = await readTrialVacationSettings();
       const postTrialPlan = ["monthly", "termly", "yearly"].includes(plan)
         ? plan
         : "monthly";
@@ -8457,6 +8486,7 @@ app.post(
         status: "trial_active",
         plan: "trial",
         planEndsAt: admin.firestore.Timestamp.fromDate(trialEndsAt),
+        ...buildTrialVacationFields(trialVacationSettings, now),
         featurePlan: featurePlan || "starter",
         billing: {
           status: "trialing",
@@ -9334,6 +9364,7 @@ app.post(
 
           const now = Date.now();
           const trialEndsAt = new Date(now + 30 * 24 * 60 * 60 * 1000);
+          const trialVacationSettings = await readTrialVacationSettings();
           const postTrialPlan = ["monthly", "termly", "yearly"].includes(plan)
             ? plan
             : "monthly";
@@ -9348,6 +9379,7 @@ app.post(
             status: "trial_active",
             plan: "trial",
             planEndsAt: admin.firestore.Timestamp.fromDate(trialEndsAt),
+            ...buildTrialVacationFields(trialVacationSettings, now),
             featurePlan: featurePlan || "starter",
             billing: {
               status: "trialing",
@@ -10644,6 +10676,278 @@ const resolveSubscriptionRenewal = (cycleValue, paidAt = new Date()) => {
   planEndsAt.setMonth(planEndsAt.getMonth() + months);
   return { cycle, planEndsAt };
 };
+
+app.get(
+  "/api/superadmin/trial-vacation",
+  authMiddleware,
+  superAdminMiddleware,
+  async (_req, res) => {
+    try {
+      const settings = await readTrialVacationSettings();
+      return res.json({ success: true, ...settings });
+    } catch (error) {
+      console.error("Failed to load trial vacation settings:", error);
+      return res.status(500).json({ error: "Failed to load vacation mode." });
+    }
+  },
+);
+
+app.post(
+  "/api/superadmin/trial-vacation",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const active = req.body?.active === true;
+      const db = admin.firestore();
+      const settingsRef = db
+        .collection(TRIAL_VACATION_SETTINGS_PATH[0])
+        .doc(TRIAL_VACATION_SETTINGS_PATH[1]);
+      const current = await readTrialVacationSettings();
+
+      const now = Date.now();
+      const vacationStartedAt =
+        active && current.active && current.startedAt ? current.startedAt : now;
+      if (active) {
+        await settingsRef.set(
+          {
+            active: true,
+            startedAt: admin.firestore.Timestamp.fromMillis(vacationStartedAt),
+            lastEndedAt: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedBy: req.user.uid,
+          },
+          { merge: true },
+        );
+      }
+      const trialSnapshot = await db
+        .collection("schools")
+        .where("plan", "==", "trial")
+        .get();
+      let batch = db.batch();
+      let writes = 0;
+      let updatedSchools = 0;
+      const commitBatch = async () => {
+        if (!writes) return;
+        await batch.commit();
+        batch = db.batch();
+        writes = 0;
+      };
+
+      for (const schoolDoc of trialSnapshot.docs) {
+        const school = schoolDoc.data() || {};
+        if (active) {
+          if (school.trialVacationPaused === true) continue;
+          batch.set(
+            schoolDoc.ref,
+            {
+              trialVacationPaused: true,
+              trialVacationPausedAt:
+                admin.firestore.Timestamp.fromMillis(vacationStartedAt),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        } else {
+          if (school.trialVacationPaused !== true) continue;
+          const pausedAt =
+            typeof school.trialVacationPausedAt?.toMillis === "function"
+              ? school.trialVacationPausedAt.toMillis()
+              : current.startedAt || now;
+          const planEndsAt =
+            typeof school.planEndsAt?.toMillis === "function"
+              ? school.planEndsAt.toMillis()
+              : new Date(school.planEndsAt || 0).getTime();
+          const extensionMs = Math.max(0, now - pausedAt);
+          batch.set(
+            schoolDoc.ref,
+            {
+              ...(Number.isFinite(planEndsAt) && planEndsAt > 0
+                ? {
+                    planEndsAt: admin.firestore.Timestamp.fromMillis(
+                      planEndsAt + extensionMs,
+                    ),
+                  }
+                : {}),
+              trialVacationPaused: false,
+              trialVacationPausedAt: admin.firestore.FieldValue.delete(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+        writes += 1;
+        updatedSchools += 1;
+        if (writes >= 450) await commitBatch();
+      }
+      await commitBatch();
+
+      if (!active) {
+        await settingsRef.set(
+          {
+            active: false,
+            startedAt: admin.firestore.FieldValue.delete(),
+            lastEndedAt: admin.firestore.Timestamp.fromMillis(now),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedBy: req.user.uid,
+          },
+          { merge: true },
+        );
+      }
+      return res.json({ success: true, active, updatedSchools });
+    } catch (error) {
+      console.error("Failed to update trial vacation settings:", error);
+      return res.status(500).json({ error: "Failed to update vacation mode." });
+    }
+  },
+);
+
+const readSubscriptionVacationSettings = async () => {
+  const snapshot = await admin
+    .firestore()
+    .collection("platformSettings")
+    .doc("subscriptionVacation")
+    .get();
+  const data = snapshot.exists ? snapshot.data() || {} : {};
+  const startedAt =
+    typeof data.startedAt?.toMillis === "function"
+      ? data.startedAt.toMillis()
+      : Number(data.startedAt || 0);
+  return {
+    active: data.active === true,
+    startedAt: Number.isFinite(startedAt) && startedAt > 0 ? startedAt : null,
+    updatedBy: data.updatedBy || null,
+  };
+};
+
+app.get(
+  "/api/superadmin/subscription-vacation",
+  authMiddleware,
+  superAdminMiddleware,
+  async (_req, res) => {
+    try {
+      return res.json({
+        success: true,
+        ...(await readSubscriptionVacationSettings()),
+      });
+    } catch (error) {
+      console.error("Failed to load subscription vacation settings:", error);
+      return res.status(500).json({ error: "Failed to load subscription vacation mode." });
+    }
+  },
+);
+
+app.post(
+  "/api/superadmin/subscription-vacation",
+  authLimiter,
+  authMiddleware,
+  superAdminMiddleware,
+  async (req, res) => {
+    try {
+      const active = req.body?.active === true;
+      const db = admin.firestore();
+      const settingsRef = db
+        .collection("platformSettings")
+        .doc("subscriptionVacation");
+      const current = await readSubscriptionVacationSettings();
+      const now = Date.now();
+      const vacationStartedAt =
+        active && current.active && current.startedAt ? current.startedAt : now;
+
+      if (active) {
+        await settingsRef.set(
+          {
+            active: true,
+            startedAt: admin.firestore.Timestamp.fromMillis(vacationStartedAt),
+            lastEndedAt: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedBy: req.user.uid,
+          },
+          { merge: true },
+        );
+      }
+
+      const schoolsSnapshot = await db.collection("schools").get();
+      let batch = db.batch();
+      let writes = 0;
+      let updatedSchools = 0;
+      const commitBatch = async () => {
+        if (!writes) return;
+        await batch.commit();
+        batch = db.batch();
+        writes = 0;
+      };
+
+      for (const schoolDoc of schoolsSnapshot.docs) {
+        const school = schoolDoc.data() || {};
+        if (!["monthly", "termly", "yearly"].includes(school.plan)) continue;
+        if (active) {
+          if (school.subscriptionVacationPaused === true) continue;
+          batch.set(
+            schoolDoc.ref,
+            {
+              subscriptionVacationPaused: true,
+              subscriptionVacationPausedAt:
+                admin.firestore.Timestamp.fromMillis(vacationStartedAt),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        } else {
+          if (school.subscriptionVacationPaused !== true) continue;
+          const pausedAt =
+            typeof school.subscriptionVacationPausedAt?.toMillis === "function"
+              ? school.subscriptionVacationPausedAt.toMillis()
+              : current.startedAt || now;
+          const planEndsAt =
+            typeof school.planEndsAt?.toMillis === "function"
+              ? school.planEndsAt.toMillis()
+              : new Date(school.planEndsAt || 0).getTime();
+          const extensionMs = Math.max(0, now - pausedAt);
+          batch.set(
+            schoolDoc.ref,
+            {
+              ...(Number.isFinite(planEndsAt) && planEndsAt > 0
+                ? {
+                    planEndsAt: admin.firestore.Timestamp.fromMillis(
+                      planEndsAt + extensionMs,
+                    ),
+                  }
+                : {}),
+              subscriptionVacationPaused: false,
+              subscriptionVacationPausedAt:
+                admin.firestore.FieldValue.delete(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+        writes += 1;
+        updatedSchools += 1;
+        if (writes >= 450) await commitBatch();
+      }
+      await commitBatch();
+
+      if (!active) {
+        await settingsRef.set(
+          {
+            active: false,
+            startedAt: admin.firestore.FieldValue.delete(),
+            lastEndedAt: admin.firestore.Timestamp.fromMillis(now),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedBy: req.user.uid,
+          },
+          { merge: true },
+        );
+      }
+      return res.json({ success: true, active, updatedSchools });
+    } catch (error) {
+      console.error("Failed to update subscription vacation settings:", error);
+      return res.status(500).json({ error: "Failed to update subscription vacation mode." });
+    }
+  },
+);
 
 /**
  * Initialize Paystack subscription for school admin
@@ -13272,6 +13576,7 @@ app.post("/api/public/start-trial", async (req, res) => {
     // Calculate trial end date (30 days from now) - store as Firestore Timestamp
     const trialEndDate = new Date();
     trialEndDate.setDate(trialEndDate.getDate() + 30);
+    const trialVacationSettings = await readTrialVacationSettings();
     
     const schoolDoc = {
       name: String(schoolName || "").trim(),
@@ -13287,6 +13592,7 @@ app.post("/api/public/start-trial", async (req, res) => {
       logoUrl: finalLogoUrl, // Store the URL immediately
       onboardingTemplate: String(onboardingTemplate || "default"),
       planEndsAt: admin.firestore.Timestamp.fromDate(trialEndDate),
+      ...buildTrialVacationFields(trialVacationSettings),
       billing: {
         status: "trialing",
         postTrialPlan: ["monthly", "termly", "yearly"].includes(

@@ -1155,6 +1155,39 @@ export async function updateSuperAdminSmsConfig(payload: {
   return apiRequest("/api/superadmin/sms/config", { body: payload });
 }
 
+export type TrialVacationSettings = {
+  success: boolean;
+  active: boolean;
+  startedAt: number | null;
+  updatedBy?: string | null;
+  updatedSchools?: number;
+  unchanged?: boolean;
+};
+
+export async function getTrialVacationSettings(): Promise<TrialVacationSettings> {
+  return apiRequest("/api/superadmin/trial-vacation", { method: "GET" });
+}
+
+export async function setTrialVacationMode(
+  active: boolean,
+): Promise<TrialVacationSettings> {
+  return apiRequest("/api/superadmin/trial-vacation", {
+    body: { active },
+  });
+}
+
+export async function getSubscriptionVacationSettings(): Promise<TrialVacationSettings> {
+  return apiRequest("/api/superadmin/subscription-vacation", { method: "GET" });
+}
+
+export async function setSubscriptionVacationMode(
+  active: boolean,
+): Promise<TrialVacationSettings> {
+  return apiRequest("/api/superadmin/subscription-vacation", {
+    body: { active },
+  });
+}
+
 export async function checkSchoolTermRollover(): Promise<{
   success: boolean;
   changed: boolean;

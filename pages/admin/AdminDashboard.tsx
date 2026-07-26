@@ -657,15 +657,25 @@ const AdminDashboard = () => {
   const isTrialWorkspace =
     (school as any)?.plan === "trial" ||
     (school as any)?.status === "trial_active";
+  const isTrialVacationPaused = (school as any)?.trialVacationPaused === true;
+  const isSubscriptionVacationPaused =
+    (school as any)?.subscriptionVacationPaused === true;
 
   const subscriptionPlanEndsAt = useMemo(() => {
     if ((school as any)?.plan === "free") return null;
     if (isTrialWorkspace) return null;
     if (!resolvedPlanEndsAt) return null;
-    return resolvedPlanEndsAt.getTime() > subscriptionNow
+    return isSubscriptionVacationPaused ||
+      resolvedPlanEndsAt.getTime() > subscriptionNow
       ? resolvedPlanEndsAt
       : null;
-  }, [resolvedPlanEndsAt, school?.plan, subscriptionNow, isTrialWorkspace]);
+  }, [
+    resolvedPlanEndsAt,
+    school?.plan,
+    subscriptionNow,
+    isTrialWorkspace,
+    isSubscriptionVacationPaused,
+  ]);
   const isRenewalDueSoon = Boolean(
     subscriptionPlanEndsAt &&
       subscriptionPlanEndsAt.getTime() - subscriptionNow <=
@@ -676,8 +686,16 @@ const AdminDashboard = () => {
     if (!isTrialWorkspace) return null;
     const planEndsAt = normalizePlanEndsAt((school as any)?.planEndsAt);
     if (!planEndsAt) return null;
-    return planEndsAt.getTime() > subscriptionNow ? planEndsAt : null;
-  }, [school?.planEndsAt, school?.plan, subscriptionNow, isTrialWorkspace]);
+    return isTrialVacationPaused || planEndsAt.getTime() > subscriptionNow
+      ? planEndsAt
+      : null;
+  }, [
+    school?.planEndsAt,
+    school?.plan,
+    subscriptionNow,
+    isTrialWorkspace,
+    isTrialVacationPaused,
+  ]);
 
   const gracePeriod = useMemo(() => {
     if ((school as any)?.plan === "free") return null;
@@ -3878,37 +3896,53 @@ const AdminDashboard = () => {
                     </div>
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
-                        Subscription Countdown
+                        {isSubscriptionVacationPaused
+                          ? "Subscription Paused"
+                          : "Subscription Countdown"}
                       </p>
                       <h3 className="text-xl font-bold text-slate-900 mt-1">
-                        {isRenewalDueSoon
+                        {isSubscriptionVacationPaused
+                          ? "School vacation mode"
+                          : isRenewalDueSoon
                           ? "Renewal due soon"
                           : "Subscription active"}
                       </h3>
                       <p className="text-sm text-slate-600 mt-2">
-                        Your subscription {isRenewalDueSoon ? "ends" : "is active until"}{" "}
+                        {isSubscriptionVacationPaused
+                          ? "Your paid subscription countdown is paused. No subscription days will be lost."
+                          : `Your subscription ${isRenewalDueSoon ? "ends" : "is active until"} `}
+                        {!isSubscriptionVacationPaused && (
                         <span className="font-semibold text-slate-800">
                           {subscriptionPlanEndsAt.toLocaleDateString()}
                         </span>
-                        {isRenewalDueSoon
+                        )}
+                        {!isSubscriptionVacationPaused && isRenewalDueSoon
                           ? ". Renew before the end date to avoid interruption."
-                          : "."}
+                          : !isSubscriptionVacationPaused
+                            ? "."
+                            : ""}
                       </p>
                     </div>
                   </div>
 
                   <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-3">
                     <div className="px-4 py-2 rounded-full text-sm font-semibold bg-[#0B4A82] text-white">
-                      {isRenewalDueSoon
+                      {isSubscriptionVacationPaused
+                        ? "Vacation mode"
+                        : isRenewalDueSoon
                         ? "Subscription ends soon"
                         : "Subscription active"}
                     </div>
                     <div className="px-4 py-2 rounded-2xl bg-slate-50 border border-slate-200 text-slate-700">
                       <div className="text-xs uppercase text-slate-400">
-                        Countdown
+                        {isSubscriptionVacationPaused ? "Status" : "Countdown"}
                       </div>
                       <div className="text-base sm:text-lg font-bold">
-                        <LiveCountdownText target={subscriptionPlanEndsAt} />
+                        {isSubscriptionVacationPaused ? (
+                          "Paused"
+                        ) : (
+                          <LiveCountdownText target={subscriptionPlanEndsAt} />
+                        )}
                       </div>
                     </div>
                     {hasFeature("billing") && (
@@ -3936,31 +3970,42 @@ const AdminDashboard = () => {
                     </div>
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
-                        Trial Countdown
+                        {isTrialVacationPaused
+                          ? "Trial Paused"
+                          : "Trial Countdown"}
                       </p>
                       <h3 className="text-xl font-bold text-slate-900 mt-1">
                         Free 30-Day Testing Period
                       </h3>
                       <p className="text-sm text-slate-600 mt-2">
-                        You have free access to test how the system works until{" "}
+                        {isTrialVacationPaused
+                          ? "School vacation mode is active. Your trial countdown is paused and no trial days will be lost."
+                          : "You have free access to test how the system works until "}
+                        {!isTrialVacationPaused && (
                         <span className="font-semibold text-slate-800">
                           {trialPlanEndsAt.toLocaleDateString()}
                         </span>
-                        . When the trial ends, the main countdown of your billing cycle will start.
+                        )}
+                        {!isTrialVacationPaused &&
+                          ". When the trial ends, the main countdown of your billing cycle will start."}
                       </p>
                     </div>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3">
                     <div className="px-4 py-2 rounded-full text-sm font-semibold bg-emerald-500 text-white">
-                      Trial ends
+                      {isTrialVacationPaused ? "Vacation mode" : "Trial ends"}
                     </div>
                     <div className="px-4 py-2 rounded-2xl bg-white border border-slate-200 text-slate-700">
                       <div className="text-xs uppercase text-slate-400">
-                        Countdown
+                        {isTrialVacationPaused ? "Status" : "Countdown"}
                       </div>
                       <div className="text-lg font-bold">
-                        <LiveCountdownText target={trialPlanEndsAt} />
+                        {isTrialVacationPaused ? (
+                          "Paused"
+                        ) : (
+                          <LiveCountdownText target={trialPlanEndsAt} />
+                        )}
                       </div>
                     </div>
                   </div>
