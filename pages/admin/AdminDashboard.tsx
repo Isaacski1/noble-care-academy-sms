@@ -4086,7 +4086,7 @@ const AdminDashboard = () => {
                     <p className="text-sm text-slate-600 mt-2">
                       WhatsApp or call support:{" "}
                       <span className="font-semibold text-slate-800">
-                        0201008784
+                        0549175604
                       </span>
                       .
                     </p>
@@ -4095,7 +4095,7 @@ const AdminDashboard = () => {
 
                 <div className="flex flex-wrap items-center gap-3">
                   <a
-                    href="https://wa.me/233201008784"
+                    href="https://wa.me/233549175604"
                     className="inline-flex items-center gap-2 rounded-full bg-[linear-gradient(135deg,#059669_0%,#10b981_100%)] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_14px_30px_-22px_rgba(5,150,105,0.34)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_34px_-20px_rgba(5,150,105,0.28)]"
                     target="_blank"
                     rel="noreferrer"
@@ -4103,7 +4103,7 @@ const AdminDashboard = () => {
                     WhatsApp
                   </a>
                   <a
-                    href="tel:+233201008784"
+                    href="tel:+233549175604"
                     className={DASHBOARD_BUTTON_PRIMARY}
                   >
                     Call Support

@@ -8,7 +8,6 @@ import { showToast } from "../../services/toast";
 import { deleteParentDashboardNotice, getParentDashboardNoticeHistory, sendParentDashboardNotice } from "../../services/backendApi";
 import { API_BASE_URL } from "../../src/config";
 import { MessageSquare, Users, Send, Loader2, RefreshCw, AlertTriangle, Sparkles, CreditCard, Wallet, ShieldAlert, ChevronDown, Filter, CheckCircle2, Inbox, Trash2 } from "lucide-react";
-import { CLASSES_LIST } from "../../constants";
 import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 import { usePaystackPayment } from "react-paystack";
 
@@ -25,6 +24,11 @@ type SendResult = { phone: string; success: boolean; error?: string };
 
 // Dynamic SMS Rate fetched from settings
 const SAFE_BROADCAST_LIMIT = 50;
+const normalizeRecipientClassName = (value?: string | null) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 
 const TEMPLATES = [
   { label: "School Fees Reminder", text: "Dear Parent, this is a reminder that school fees for this term are due. Kindly make payment at your earliest convenience. Thank you." },
@@ -35,6 +39,7 @@ const TEMPLATES = [
 
 const Reminders: React.FC = () => {
   const { school } = useSchool();
+  const { classes: availableClasses } = useSchoolClasses();
   const { user } = useAuth();
   
   // Recipients
@@ -42,6 +47,7 @@ const Reminders: React.FC = () => {
   const [loadingParents, setLoadingParents] = useState(false);
   const [selectedPhones, setSelectedPhones] = useState<Set<string>>(new Set());
   const [classFilter, setClassFilter] = useState("All");
+  const [classFilterId, setClassFilterId] = useState<string | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   // Dynamic Rate state
@@ -252,7 +258,11 @@ const Reminders: React.FC = () => {
               
               // Load new balance dynamically
               const { doc, getDoc } = await import("firebase/firestore");
-              const schoolRef = doc(firestore, "schools", school?.id);
+              const schoolId = school?.id;
+              if (!schoolId) {
+                throw new Error("School workspace is not available.");
+              }
+              const schoolRef = doc(firestore, "schools", schoolId);
               const snap = await getDoc(schoolRef);
               if (snap.exists()) {
                  const data = snap.data();
@@ -278,7 +288,7 @@ const Reminders: React.FC = () => {
         }
       });
     }
-  }, [generatedReference]);
+  }, [generatedReference, school?.id]);
 
   const handleTopup = async () => {
     const numericAmount = Number(topupAmount);
@@ -323,15 +333,19 @@ const Reminders: React.FC = () => {
           const d = studentDoc.data() as any;
           const studentName = d.name || (d.firstName && d.lastName ? `${d.firstName} ${d.lastName}` : "Student");
           
-          let className = d.class || d.className || d.classLevel || d.grade;
-          let classId = d.classId || "";
-          if (d.classId) {
-             const found = CLASSES_LIST.find(c => c.id === d.classId);
-             if (found) {
-               className = found.name;
-               classId = found.id;
-             }
-          }
+          const storedClassName = String(
+            d.class || d.className || d.classLevel || d.grade || "",
+          ).trim();
+          const storedClassId = String(d.classId || "").trim();
+          const configuredClass =
+            availableClasses.find(
+              (classRoom) =>
+                classRoom.name.trim().toLowerCase() ===
+                storedClassName.toLowerCase(),
+            ) ||
+            availableClasses.find((classRoom) => classRoom.id === storedClassId);
+          const className = configuredClass?.name || storedClassName;
+          const classId = configuredClass?.id || storedClassId;
 
           const addContact = (nameValue: any, phoneValue: any) => {
             const phone = String(phoneValue || "").trim();
@@ -363,26 +377,37 @@ const Reminders: React.FC = () => {
       }
     };
     load();
-  }, [school?.id]);
+  }, [school?.id, availableClasses]);
 
   const classes = ["All", ...Array.from(new Set(parents.map((p) => p.class).filter(Boolean) as string[])).sort()];
   
   const filteredParents = classFilter === "All"
       ? parents
       : classFilter === "No Class"
-        ? parents.filter((p) => !p.class)
-        : parents.filter((p) => p.class === classFilter);
+        ? parents.filter((p) => !p.classId && !p.class)
+        : parents.filter(
+            (p) =>
+              normalizeRecipientClassName(p.class) ===
+              normalizeRecipientClassName(classFilter),
+          );
         
-  const { classes: availableClasses } = useSchoolClasses();
-
-  const getClassParentCount = (className: string) => {
-    return parents.filter((p) => p.class === className).length;
+  const getClassParentCount = (_classId: string, className: string) => {
+    return parents.filter(
+      (p) =>
+        normalizeRecipientClassName(p.class) ===
+        normalizeRecipientClassName(className),
+    ).length;
   };
 
   const noClassCount = parents.filter((p) => !p.class).length;
 
-  const selectClassGroup = (label: string, contacts: ParentContact[]) => {
+  const selectClassGroup = (
+    label: string,
+    contacts: ParentContact[],
+    classId: string | null = null,
+  ) => {
     setClassFilter(label === "All School" ? "All" : label);
+    setClassFilterId(classId);
     setSelectedPhones(new Set(contacts.map((p) => p.phone).slice(0, SAFE_BROADCAST_LIMIT)));
   };
 
@@ -501,7 +526,7 @@ const Reminders: React.FC = () => {
     }
   };
 
-  const selectedParentNoticeContacts = parents.filter((parent) =>
+  const selectedParentNoticeContacts = filteredParents.filter((parent) =>
     selectedPhones.has(parent.phone),
   );
 
@@ -526,8 +551,8 @@ const Reminders: React.FC = () => {
     setSendingParentNotice(true);
     try {
       const selectedClass =
-        classFilter !== "All" && classFilter !== "No Class"
-          ? availableClasses.find((cls) => cls.name === classFilter)
+        classFilterId
+          ? availableClasses.find((cls) => cls.id === classFilterId)
           : null;
 
       await sendParentDashboardNotice({
@@ -801,7 +826,7 @@ const Reminders: React.FC = () => {
                         <div className="absolute left-0 right-0 mt-2 z-20 bg-white border border-slate-150 rounded-xl shadow-xl max-h-60 overflow-y-auto custom-scrollbar p-1">
                           <button
                             onClick={() => {
-                              selectClassGroup("All School", parents);
+                              selectClassGroup("All School", parents, null);
                               setDropdownOpen(false);
                             }}
                             className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition ${classFilter === "All" ? "bg-indigo-50 text-indigo-700" : "hover:bg-slate-50 text-slate-600"}`}
@@ -809,25 +834,54 @@ const Reminders: React.FC = () => {
                             All Classes
                           </button>
                           {availableClasses.map((cls) => {
-                            const count = getClassParentCount(cls.name);
+                            const count = getClassParentCount(cls.id, cls.name);
                             return (
                               <button
                                 key={cls.id}
                                 onClick={() => {
-                                  selectClassGroup(cls.name, parents.filter((p) => p.class === cls.name));
+                                  const classContacts = parents.filter(
+                                    (parent) =>
+                                      normalizeRecipientClassName(
+                                        parent.class,
+                                      ) ===
+                                      normalizeRecipientClassName(cls.name),
+                                  );
+                                  selectClassGroup(
+                                    cls.name,
+                                    classContacts,
+                                    cls.id,
+                                  );
                                   setDropdownOpen(false);
                                 }}
-                                className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition flex items-center justify-between ${classFilter === cls.name ? "bg-indigo-50 text-indigo-700" : "hover:bg-slate-50 text-slate-600"}`}
+                                className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition flex items-center justify-between border ${
+                                  classFilterId === cls.id
+                                    ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                                    : "hover:bg-slate-50 text-slate-600 border-transparent"
+                                }`}
                               >
                                 <span>{cls.name}</span>
-                                <span className="bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full text-[10px]">{count}</span>
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] ${
+                                    classFilterId === cls.id
+                                      ? "bg-white/20 text-white"
+                                      : "bg-slate-100 text-slate-500"
+                                  }`}
+                                >
+                                  {count}
+                                </span>
                               </button>
                             );
                           })}
                           {noClassCount > 0 && (
                             <button
                               onClick={() => {
-                                selectClassGroup("No Class", parents.filter((p) => !p.class));
+                                selectClassGroup(
+                                  "No Class",
+                                  parents.filter(
+                                    (p) => !p.classId && !p.class,
+                                  ),
+                                  null,
+                                );
                                   setDropdownOpen(false);
                               }}
                               className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition flex items-center justify-between ${classFilter === "No Class" ? "bg-indigo-50 text-indigo-700" : "hover:bg-slate-50 text-slate-600"}`}
@@ -850,6 +904,26 @@ const Reminders: React.FC = () => {
                     </div>
                   ) : (
                     <div className="space-y-1">
+                      {classFilter !== "All" && (
+                        <div className="mb-4 flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600 text-white">
+                              <Users size={14} />
+                            </span>
+                            <div>
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">
+                                Selected class
+                              </p>
+                              <p className="text-sm font-bold text-indigo-800">
+                                {classFilter}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="rounded-full bg-white px-2.5 py-1 text-xs font-bold text-indigo-700">
+                            {filteredParents.length} contacts
+                          </span>
+                        </div>
+                      )}
                       <div className="flex items-center justify-between mb-3 px-2">
                         <p className="text-xs font-semibold text-slate-500">
                           {filteredParents.length} Contacts {classFilter !== "All" && `in ${classFilter}`}
@@ -882,7 +956,7 @@ const Reminders: React.FC = () => {
                                 <p className="text-[11px] text-slate-500 truncate">{p.phone} • Ward: {p.studentName}</p>
                               </div>
                               {p.class && (
-                                <span className="shrink-0 px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px] font-medium">
+                                <span className="shrink-0 px-2 py-0.5 bg-indigo-100 text-indigo-700 ring-1 ring-indigo-200 rounded text-[10px] font-bold">
                                   {p.class}
                                 </span>
                               )}

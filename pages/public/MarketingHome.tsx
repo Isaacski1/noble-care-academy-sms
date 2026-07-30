@@ -604,12 +604,33 @@ const MarketingHome = () => {
             </motion.p>
 
             <motion.div variants={fadeUp} className="hero-buttons" style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-              <Link to="/book-demo" className="primary-cta" style={primaryCtaStyle}>
-                Book Free Demo <ArrowRight size={18} />
+              <Link to="/get-started" className="primary-cta" style={primaryCtaStyle}>
+                Start 30-Day Free Trial <ArrowRight size={18} />
               </Link>
-              <Link to="/get-started" className="secondary-cta" style={secondaryCtaStyle}>
-                Register Your School
+              <Link to="/demos" className="secondary-cta" style={secondaryCtaStyle}>
+                Watch Demo Videos
               </Link>
+            </motion.div>
+            <motion.div
+              variants={fadeUp}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                flexWrap: "wrap",
+                marginTop: 18,
+                color: "rgba(255,255,255,0.82)",
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              <CheckCircle size={15} color="#6EE7B7" />
+              <span>Full access for 30 days</span>
+              <span aria-hidden="true" style={{ color: "rgba(255,255,255,0.35)" }}>•</span>
+              <span>No credit card required</span>
+              <span aria-hidden="true" style={{ color: "rgba(255,255,255,0.35)" }}>•</span>
+              <span>Choose a paid plan after your trial</span>
             </motion.div>
           </motion.div>
 
