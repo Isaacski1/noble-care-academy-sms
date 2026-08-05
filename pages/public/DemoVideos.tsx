@@ -20,7 +20,7 @@ type DemoVideo = {
 const DEMO_VIDEOS: DemoVideo[] = [
   { id: "overview", title: "Complete School Manager GH Overview", description: "Tour the platform, its dashboards, and the school operations it brings together.", category: "Getting Started", duration: "12 min", youtubeUrl: "https://youtu.be/4DztpOaDQBU" },
   { id: "workspace", title: "Create Your School Workspace", description: "Register a school, verify the administrator account, and begin the free trial.", category: "Getting Started", duration: "4:28 min", youtubeUrl: "https://youtu.be/01KfH8RJBuI" },
-  { id: "setup", title: "Initial School Setup", description: "Configure branding, academic year, term, classes, and essential settings.", category: "Getting Started", duration: "5–7 min", youtubeUrl: "" },
+  { id: "setup", title: "Initial School Setup", description: "Configure branding, academic year, term, classes, and essential settings.", category: "Getting Started", duration: "6:12 min", youtubeUrl: "https://youtu.be/Bxpwu6Nh8z4" },
   { id: "admin", title: "School Admin Dashboard Tour", description: "Understand dashboard totals, shortcuts, alerts, and management areas.", category: "School Admin", duration: "5–7 min", youtubeUrl: "" },
   { id: "people", title: "Manage Students, Classes and Teachers", description: "Add school records, organize classes, and assign teachers.", category: "School Admin", duration: "6–8 min", youtubeUrl: "" },
   { id: "fees", title: "Fees, Payments and Balances", description: "Create fee items, record payments, follow balances, and read finance reports.", category: "School Admin", duration: "6–8 min", youtubeUrl: "" },
