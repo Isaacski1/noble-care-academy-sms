@@ -317,6 +317,8 @@ const FeesPayments: React.FC = () => {
 
   const [statusFilter, setStatusFilter] =
     useState<(typeof statusFilters)[number]>("all");
+  const [ledgerClassFilter, setLedgerClassFilter] = useState("all");
+  const [defaultersClassFilter, setDefaultersClassFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [dateRange, setDateRange] = useState("This term");
 
@@ -1970,16 +1972,18 @@ const FeesPayments: React.FC = () => {
 
   const filteredLedgerRows = useMemo(() => {
     const queryText = search.trim().toLowerCase();
-    return ledgerRows.filter(({ student, status }) => {
+    return ledgerRows.filter(({ student, status, ledger }) => {
       const matchesSearch = queryText
         ? [student?.name, student?.guardianName, student?.guardianPhone]
             .filter(Boolean)
             .some((value) => String(value).toLowerCase().includes(queryText))
         : true;
       const matchesStatus = statusFilter === "all" || status === statusFilter;
-      return matchesSearch && matchesStatus;
+      const matchesClass =
+        ledgerClassFilter === "all" || ledger.classId === ledgerClassFilter;
+      return matchesSearch && matchesStatus && matchesClass;
     });
-  }, [ledgerRows, search, statusFilter]);
+  }, [ledgerRows, search, statusFilter, ledgerClassFilter]);
 
   const financeMetrics = useMemo(() => {
     let totalDue = 0;
@@ -2161,10 +2165,16 @@ const FeesPayments: React.FC = () => {
   }, [currentTermPayments, getPaymentCreatedAtMs]);
 
   const defaulters = useMemo(() => {
-    return filteredLedgerRows.filter(
-      ({ balance, totalPaid }) => balance > 0 && totalPaid > 0,
-    );
-  }, [filteredLedgerRows]);
+    return ledgerRows
+      .filter(
+        ({ balance, totalPaid }) => balance > 0 && totalPaid > 0,
+      )
+      .filter(({ ledger }) =>
+        defaultersClassFilter === "all"
+          ? true
+          : ledger.classId === defaultersClassFilter,
+      );
+  }, [ledgerRows, defaultersClassFilter]);
 
   const onboardingLedgers = useMemo(() => {
     const scopedLedgers =
@@ -4603,8 +4613,25 @@ const FeesPayments: React.FC = () => {
               <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-4 py-2 text-xs text-slate-500 shadow-sm">
                 <Filter size={14} /> {filteredLedgerRows.length} records
               </div>
+              <div className="mt-3 w-full sm:w-56">
+                <label className="block text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                  Filter by Class
+                </label>
+                <select
+                  value={ledgerClassFilter}
+                  onChange={(e) => setLedgerClassFilter(e.target.value)}
+                  className={DASH_INPUT}
+                >
+                  <option value="all">All Classes</option>
+                  {availableClasses.map((cls) => (
+                    <option key={cls.id} value={cls.id}>
+                      {cls.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-            <div className="mt-4 overflow-x-auto rounded-[24px] border border-white/80 bg-white/70 p-2 sm:p-3 shadow-sm">
+            <div className="mt-4 max-h-[480px] overflow-x-auto overflow-y-auto rounded-[24px] border border-white/80 bg-white/70 p-2 sm:p-3 shadow-sm">
               <table className="w-full min-w-[760px] text-left text-sm">
                 <thead>
                   <tr className="text-xs uppercase text-slate-400">
@@ -4721,15 +4748,38 @@ const FeesPayments: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <div data-assistant-focus="fees-outstanding" className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
-              <h2 className="text-lg font-semibold text-slate-900">
-                Defaulters
-              </h2>
-              <p className="text-xs text-slate-500">
-                Students with outstanding balances.
-              </p>
-              <div className="mt-4 max-h-[320px] space-y-3 overflow-y-auto pr-1">
+          <div className="grid grid-cols-1 gap-6">
+            <div data-assistant-focus="fees-outstanding" className={`relative overflow-hidden ${DASH_PANEL} p-6 lg:col-span-2`}>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    Defaulters
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Students with outstanding balances.
+                  </p>
+                </div>
+                <div className="w-full sm:w-48">
+                  <label className="block text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                    Filter by Class
+                  </label>
+                  <select
+                    value={defaultersClassFilter}
+                    onChange={(e) =>
+                      setDefaultersClassFilter(e.target.value)
+                    }
+                    className={DASH_INPUT}
+                  >
+                    <option value="all">All Classes</option>
+                    {availableClasses.map((cls) => (
+                      <option key={cls.id} value={cls.id}>
+                        {cls.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="mt-4 max-h-[400px] space-y-3 overflow-y-auto pr-1 scrollbar-thin">
                 {loading ? (
                   Array.from({ length: 4 }).map((_, index) => (
                     <SkeletonBlock key={index} className="h-12" />
