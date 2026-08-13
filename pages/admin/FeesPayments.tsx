@@ -2984,6 +2984,56 @@ const FeesPayments: React.FC = () => {
                   </div>
                 );
               })}
+              <div className={`relative overflow-hidden ${DASH_PANEL} p-6 md:col-span-2`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                      Finance onboarding
+                    </p>
+                    <h2 className="mt-1 text-xl font-semibold text-slate-900">
+                      Onboarding Setup
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Configure onboarding mode, date, and opening balances.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] text-slate-500 shadow-sm">
+                    {onboardingMode === "fresh_start"
+                      ? "Fresh start"
+                      : "Full history"}
+                  </span>
+                </div>
+
+                <div className="mt-4 space-y-3 text-sm">
+                  <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3">
+                    <span className="text-slate-500">Onboarding date</span>
+                    <span className="font-semibold text-slate-800">
+                      {onboardingDate
+                        ? new Date(onboardingDate).toLocaleDateString()
+                        : "Not set"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3">
+                    <span className="text-slate-500">Opening paid</span>
+                    <span className="font-semibold text-slate-800">
+                      {formatMoney(onboardingSummary.openingPaid)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3">
+                    <span className="text-slate-500">Opening balance</span>
+                    <span className="font-semibold text-slate-800">
+                      {formatMoney(onboardingSummary.openingBalance)}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowOnboardingWizard(true)}
+                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                >
+                  <Users size={16} /> Open Onboarding Wizard
+                </button>
+              </div>
             </div>
           </div>
 
@@ -4710,57 +4760,6 @@ const FeesPayments: React.FC = () => {
                   ))
                 )}
               </div>
-            </div>
-
-            <div className={`relative overflow-hidden ${DASH_PANEL} p-6`}>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                    Finance onboarding
-                  </p>
-                  <h2 className="mt-1 text-xl font-semibold text-slate-900">
-                    Onboarding Setup
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Configure onboarding mode, date, and opening balances.
-                  </p>
-                </div>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] text-slate-500 shadow-sm">
-                  {onboardingMode === "fresh_start"
-                    ? "Fresh start"
-                    : "Full history"}
-                </span>
-              </div>
-
-              <div className="mt-4 space-y-3 text-sm">
-                <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3">
-                  <span className="text-slate-500">Onboarding date</span>
-                  <span className="font-semibold text-slate-800">
-                    {onboardingDate
-                      ? new Date(onboardingDate).toLocaleDateString()
-                      : "Not set"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3">
-                  <span className="text-slate-500">Opening paid</span>
-                  <span className="font-semibold text-slate-800">
-                    {formatMoney(onboardingSummary.openingPaid)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3">
-                  <span className="text-slate-500">Opening balance</span>
-                  <span className="font-semibold text-slate-800">
-                    {formatMoney(onboardingSummary.openingBalance)}
-                  </span>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setShowOnboardingWizard(true)}
-                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-              >
-                <Users size={16} /> Open Onboarding Wizard
-              </button>
             </div>
 
             <div className={`relative overflow-hidden ${DASH_PANEL} p-6 lg:col-span-2`}>
