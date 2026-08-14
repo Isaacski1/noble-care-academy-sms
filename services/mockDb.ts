@@ -3985,8 +3985,15 @@ class FirestoreService {
     };
     try {
       const primary = await readFeesFrom(feesCollection);
-      if (primary.length > 0) return primary;
-      return readFeesFrom(alternateFeesCollection).catch(() => []);
+      const alternate = await readFeesFrom(alternateFeesCollection);
+      const allFees = [...primary];
+      const existingIds = new Set(allFees.map((f) => f.id));
+      for (const fee of alternate) {
+        if (!existingIds.has(fee.id)) {
+          allFees.push(fee);
+        }
+      }
+      return allFees;
     } catch (error) {
       console.warn("[mockDb] getFees primary query failed, trying alternate", error);
       return readFeesFrom(alternateFeesCollection).catch((alternateError) => {
@@ -4178,10 +4185,17 @@ class FirestoreService {
     };
     try {
       const primary = await readLedgersFrom(ledgerCollection);
-      if (primary.length > 0) return primary;
-      return readLedgersFrom(alternateLedgerCollection).catch(() => []);
+      const alternate = await readLedgersFrom(alternateLedgerCollection);
+      const allLedgers = [...primary];
+      const existingIds = new Set(allLedgers.map((l) => l.id));
+      for (const ledger of alternate) {
+        if (!existingIds.has(ledger.id)) {
+          allLedgers.push(ledger);
+        }
+      }
+      return allLedgers;
     } catch (error) {
-      console.warn("[mockDb] getStudentLedgers primary query failed, trying alternate", error);
+      console.warn("[mockDb] getStudentLedgers query failed, trying alternate", error);
       return readLedgersFrom(alternateLedgerCollection).catch((alternateError) => {
         console.warn("[mockDb] getStudentLedgers alternate query failed, returning empty", alternateError);
         return [];
@@ -4259,8 +4273,15 @@ class FirestoreService {
     };
     try {
       const primary = await readPaymentsFrom(paymentsCollection);
-      if (primary.length > 0) return primary;
-      return readPaymentsFrom(alternatePaymentsCollection).catch(() => []);
+      const alternate = await readPaymentsFrom(alternatePaymentsCollection);
+      const allPayments = [...primary];
+      const existingIds = new Set(allPayments.map((p) => p.id));
+      for (const payment of alternate) {
+        if (!existingIds.has(payment.id)) {
+          allPayments.push(payment);
+        }
+      }
+      return allPayments;
     } catch (error) {
       console.warn("[mockDb] getPayments primary query failed, trying alternate", error);
       return readPaymentsFrom(alternatePaymentsCollection).catch((alternateError) => {

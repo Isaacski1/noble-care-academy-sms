@@ -1265,6 +1265,8 @@ const FeesPayments: React.FC = () => {
     feeSnapshot: FeeDefinition[],
   ): Promise<StudentFeeLedger[]> => {
     const ledgersToCreate: StudentFeeLedger[] = [];
+    const ledgersToUpdate = new Map<string, StudentFeeLedger>();
+    
     for (const student of studentsList) {
       const ledgerId = buildLedgerId(schoolId, student.id, academicYear, term);
       const existing = ledgers.find((l) => l.id === ledgerId);
@@ -1321,12 +1323,31 @@ const FeesPayments: React.FC = () => {
         createdAt: existing?.createdAt || Date.now(),
         updatedAt: Date.now(),
       };
-      ledgersToCreate.push(payload);
+      
+      // Track for local state update
+      if (existing) {
+        ledgersToUpdate.set(ledgerId, payload);
+      } else {
+        ledgersToCreate.push(payload);
+      }
     }
+    
     if (ledgersToCreate.length > 0) {
       await db.upsertStudentLedgersBulk(ledgersToCreate);
     }
-    return ledgersToCreate;
+    
+    // Update local state immediately after bulk write
+    const ledgersMap = new Map(
+      [...ledgersToUpdate.entries()].map(([id, ledger]) => [id, ledger]),
+    );
+    setLedgers((prev) => {
+      const updated = prev.map((l) => ledgersMap.get(l.id) || l);
+      const newLedgers = ledgersToCreate;
+      const existingIds = new Set(updated.map((l) => l.id));
+      return [...updated, ...newLedgers.filter((l) => !existingIds.has(l.id))];
+    });
+    
+    return [...ledgersToCreate, ...Array.from(ledgersToUpdate.values())];
   };
 
   useEffect(() => {
@@ -1381,12 +1402,6 @@ const FeesPayments: React.FC = () => {
       try {
         await ensureLedgersBulk(syncTargets.map(t => t.student), fees);
         ledgerAutoSyncSignatureRef.current = syncSignature;
-        if (!cancelled) {
-          await fetchPrimaryData({
-            background: true,
-            requestId: financeRequestIdRef.current,
-          });
-        }
       } catch (error) {
         console.error("Failed to sync student ledgers", error);
       } finally {
@@ -1515,7 +1530,6 @@ const FeesPayments: React.FC = () => {
         applyToAcademicYear: "",
         applyToTerm: "",
       });
-      await fetchData();
     } catch (error) {
       console.error("Failed to create fee", error);
       showToast("Failed to create fee.", { type: "error" });
@@ -1648,7 +1662,6 @@ const FeesPayments: React.FC = () => {
         applyToAcademicYear: "",
         applyToTerm: "",
       });
-      await fetchData();
     } catch (error) {
       console.error("Failed to update fee", error);
       showToast("Failed to update fee.", { type: "error" });
@@ -1866,6 +1879,12 @@ const FeesPayments: React.FC = () => {
           updatedAt: Date.now(),
         }));
         await db.upsertStudentLedgersBulk(updatedLedgers);
+        
+        // Update local state immediately after bulk write
+        const updatedMap = new Map(updatedLedgers.map((l) => [l.id, l]));
+        setLedgers((prev) =>
+          prev.map((l) => updatedMap.get(l.id) || l),
+        );
       }
 
       showToast("Fee deleted.", { type: "success" });
@@ -1882,7 +1901,6 @@ const FeesPayments: React.FC = () => {
           actorName: user?.fullName || "",
         },
       });
-      await fetchData();
     } catch (error) {
       console.error("Failed to delete fee", error);
       showToast("Failed to delete fee.", { type: "error" });
@@ -2222,7 +2240,7 @@ const FeesPayments: React.FC = () => {
   const defaulters = useMemo(() => {
     return ledgerRows
       .filter(
-        ({ balance, totalPaid }) => balance > 0 && totalPaid > 0,
+        ({ balance, totalPaid }) => balance > 0,
       )
       .filter(({ ledger }) =>
         defaultersClassFilter === "all"
