@@ -1260,6 +1260,75 @@ const FeesPayments: React.FC = () => {
     return payload;
   };
 
+  const ensureLedgersBulk = async (
+    studentsList: Student[],
+    feeSnapshot: FeeDefinition[],
+  ): Promise<StudentFeeLedger[]> => {
+    const ledgersToCreate: StudentFeeLedger[] = [];
+    for (const student of studentsList) {
+      const ledgerId = buildLedgerId(schoolId, student.id, academicYear, term);
+      const existing = ledgers.find((l) => l.id === ledgerId);
+      const assignedFees = resolveFeeAssignments(student, feeSnapshot);
+      const existingFees = existing?.fees || [];
+      const feesList = assignedFees.map((fee) => {
+        const previous = existingFees.find((item) => item.feeId === fee.id);
+        const feeEntry: StudentFeeLedger["fees"][number] = {
+          feeId: fee.id,
+          feeName: fee.feeName,
+          amount: fee.amount,
+        };
+        if (previous?.openingPaidAmount !== undefined) {
+          feeEntry.openingPaidAmount = previous.openingPaidAmount;
+        }
+        if (previous?.openingBalance !== undefined) {
+          feeEntry.openingBalance = previous.openingBalance;
+        }
+        if (previous?.openingStatus !== undefined) {
+          feeEntry.openingStatus = previous.openingStatus;
+        }
+        return feeEntry;
+      });
+      const openingPaidTotal = feesList.reduce(
+        (sum, fee) => sum + (fee.openingPaidAmount || 0),
+        0,
+      );
+      const openingBalanceTotal = feesList.reduce((sum, fee) => {
+        const paid = fee.openingPaidAmount || 0;
+        const balanceValue =
+          fee.openingBalance !== undefined && fee.openingBalance !== null
+            ? fee.openingBalance
+            : Math.max(0, fee.amount - paid);
+        return sum + balanceValue;
+      }, 0);
+      const openingStatusDerived =
+        openingPaidTotal <= 0
+          ? "Unpaid"
+          : openingPaidTotal >= feesList.reduce((sum, fee) => sum + fee.amount, 0)
+            ? "Paid"
+            : "Part-paid";
+      const payload: StudentFeeLedger = {
+        id: ledgerId,
+        schoolId,
+        studentId: student.id,
+        classId: student.classId,
+        academicYear,
+        term,
+        fees: feesList,
+        openingPaidAmount: openingPaidTotal,
+        openingBalance: openingBalanceTotal,
+        openingStatus: openingStatusDerived,
+        openingDate: existing?.openingDate || onboardingDate || null,
+        createdAt: existing?.createdAt || Date.now(),
+        updatedAt: Date.now(),
+      };
+      ledgersToCreate.push(payload);
+    }
+    if (ledgersToCreate.length > 0) {
+      await db.upsertStudentLedgersBulk(ledgersToCreate);
+    }
+    return ledgersToCreate;
+  };
+
   useEffect(() => {
     if (!schoolId || loading || ledgerAutoSyncInFlightRef.current) return;
 
@@ -1310,9 +1379,7 @@ const FeesPayments: React.FC = () => {
     const syncLedgers = async () => {
       ledgerAutoSyncInFlightRef.current = true;
       try {
-        for (const { student } of syncTargets) {
-          await ensureLedger(student, fees);
-        }
+        await ensureLedgersBulk(syncTargets.map(t => t.student), fees);
         ledgerAutoSyncSignatureRef.current = syncSignature;
         if (!cancelled) {
           await fetchPrimaryData({
@@ -1416,9 +1483,7 @@ const FeesPayments: React.FC = () => {
       });
 
       const nextFees = [...fees, payload];
-      for (const student of eligibleStudents) {
-        await ensureLedger(student, nextFees);
-      }
+      await ensureLedgersBulk(eligibleStudents, nextFees);
 
       showToast("Fee created and ledgers updated.", { type: "success" });
       await logActivity({
@@ -1550,9 +1615,7 @@ const FeesPayments: React.FC = () => {
       const nextFees = fees.map((fee) =>
         fee.id === payload.id ? payload : fee,
       );
-      for (const student of impactedStudents) {
-        await ensureLedger(student, nextFees);
-      }
+      await ensureLedgersBulk(impactedStudents, nextFees);
 
       showToast("Fee updated.", { type: "success" });
       await logActivity({
@@ -1794,23 +1857,15 @@ const FeesPayments: React.FC = () => {
       await db.deleteFee(feeId, schoolId);
 
       if (feeToDelete) {
-        const allLedgers = await db.getStudentLedgers({
-          schoolId,
-          academicYear,
-          term,
-        });
-        const impactedLedgers = allLedgers.filter((ledger) =>
+        const impactedLedgers = ledgers.filter((ledger) =>
           ledger.fees.some((fee) => fee.feeId === feeToDelete.id),
         );
-        await Promise.all(
-          impactedLedgers.map((ledger) =>
-            db.upsertStudentLedger({
-              ...ledger,
-              fees: ledger.fees.filter((fee) => fee.feeId !== feeToDelete.id),
-              updatedAt: Date.now(),
-            }),
-          ),
-        );
+        const updatedLedgers = impactedLedgers.map((ledger) => ({
+          ...ledger,
+          fees: ledger.fees.filter((fee) => fee.feeId !== feeToDelete.id),
+          updatedAt: Date.now(),
+        }));
+        await db.upsertStudentLedgersBulk(updatedLedgers);
       }
 
       showToast("Fee deleted.", { type: "success" });

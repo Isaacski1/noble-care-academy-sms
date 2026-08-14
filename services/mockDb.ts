@@ -4202,6 +4202,26 @@ class FirestoreService {
     });
   }
 
+  async upsertStudentLedgersBulk(ledgers: StudentFeeLedger[]): Promise<void> {
+    if (!ledgers.length) return;
+    const schoolId = ledgers[0].schoolId;
+    await this.requireFeature(schoolId, "fees_payments");
+    this.requireSchoolId(schoolId, "upsertStudentLedgersBulk");
+    const useV2 = await this.useFinanceV2(schoolId);
+    const collectionPath = useV2
+      ? ["schools", schoolId, "feeLedgers"] as string[]
+      : ["student_ledgers"];
+    const operations = ledgers
+      .filter(Boolean)
+      .map((ledger) => (batch: ReturnType<typeof writeBatch>) => {
+        const ref = useV2
+          ? doc(firestore, ...collectionPath, ledger.id)
+          : doc(firestore, collectionPath[0], ledger.id);
+        batch.set(ref, this.stripUndefinedDeep(ledger), { merge: true });
+      });
+    await this.commitChunkedOperations(operations);
+  }
+
   async getPayments(filters: {
     schoolId?: string;
     academicYear?: string;
