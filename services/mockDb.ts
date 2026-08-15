@@ -4195,7 +4195,7 @@ class FirestoreService {
       }
       return allLedgers;
     } catch (error) {
-      console.warn("[mockDb] getStudentLedgers query failed, trying alternate", error);
+      console.warn("[mockDb] getStudentLedgers primary query failed, trying alternate", error);
       return readLedgersFrom(alternateLedgerCollection).catch((alternateError) => {
         console.warn("[mockDb] getStudentLedgers alternate query failed, returning empty", alternateError);
         return [];

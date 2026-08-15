@@ -1,0 +1,126 @@
+[1mdiff --git a/pages/admin/FeesPayments.tsx b/pages/admin/FeesPayments.tsx[m
+[1mindex 12bae4c..e1dd177 100644[m
+[1m--- a/pages/admin/FeesPayments.tsx[m
+[1m+++ b/pages/admin/FeesPayments.tsx[m
+[36m@@ -1326,6 +1326,14 @@[m [mconst FeesPayments: React.FC = () => {[m
+     if (ledgersToCreate.length > 0) {[m
+       await db.upsertStudentLedgersBulk(ledgersToCreate);[m
+     }[m
+[32m+[m[41m    [m
+[32m+[m[32m    // Update local ledgers state immediately after bulk write[m
+[32m+[m[32m    setLedgers((prev) => {[m
+[32m+[m[32m      const existingIds = new Set(prev.map(l => l.id));[m
+[32m+[m[32m      const newLedgers = ledgersToCreate.filter(l => !existingIds.has(l.id));[m
+[32m+[m[32m      return [...prev, ...newLedgers];[m
+[32m+[m[32m    });[m
+[32m+[m[41m    [m
+     return ledgersToCreate;[m
+   };[m
+ [m
+[36m@@ -1379,14 +1387,8 @@[m [mconst FeesPayments: React.FC = () => {[m
+     const syncLedgers = async () => {[m
+       ledgerAutoSyncInFlightRef.current = true;[m
+       try {[m
+[31m-        await ensureLedgersBulk(syncTargets.map(t => t.student), fees);[m
+[32m+[m[32m        const results = await ensureLedgersBulk(syncTargets.map(t => t.student), fees);[m
+         ledgerAutoSyncSignatureRef.current = syncSignature;[m
+[31m-        if (!cancelled) {[m
+[31m-          await fetchPrimaryData({[m
+[31m-            background: true,[m
+[31m-            requestId: financeRequestIdRef.current,[m
+[31m-          });[m
+[31m-        }[m
+       } catch (error) {[m
+         console.error("Failed to sync student ledgers", error);[m
+       } finally {[m
+[36m@@ -1483,6 +1485,7 @@[m [mconst FeesPayments: React.FC = () => {[m
+       });[m
+ [m
+       const nextFees = [...fees, payload];[m
+[32m+[m[32m      setFees(nextFees);[m
+       await ensureLedgersBulk(eligibleStudents, nextFees);[m
+ [m
+       showToast("Fee created and ledgers updated.", { type: "success" });[m
+[36m@@ -1615,6 +1618,7 @@[m [mconst FeesPayments: React.FC = () => {[m
+       const nextFees = fees.map((fee) =>[m
+         fee.id === payload.id ? payload : fee,[m
+       );[m
+[32m+[m[32m      setFees(nextFees);[m
+       await ensureLedgersBulk(impactedStudents, nextFees);[m
+ [m
+       showToast("Fee updated.", { type: "success" });[m
+[36m@@ -1648,7 +1652,6 @@[m [mconst FeesPayments: React.FC = () => {[m
+         applyToAcademicYear: "",[m
+         applyToTerm: "",[m
+       });[m
+[31m-      await fetchData();[m
+     } catch (error) {[m
+       console.error("Failed to update fee", error);[m
+       showToast("Failed to update fee.", { type: "error" });[m
+[36m@@ -2222,7 +2225,7 @@[m [mconst FeesPayments: React.FC = () => {[m
+   const defaulters = useMemo(() => {[m
+     return ledgerRows[m
+       .filter([m
+[31m-        ({ balance, totalPaid }) => balance > 0 && totalPaid > 0,[m
+[32m+[m[32m        ({ balance }) => balance > 0,[m
+       )[m
+       .filter(({ ledger }) =>[m
+         defaultersClassFilter === "all"[m
+[1mdiff --git a/services/mockDb.ts b/services/mockDb.ts[m
+[1mindex 8bb111c..dee7e3f 100644[m
+[1m--- a/services/mockDb.ts[m
+[1m+++ b/services/mockDb.ts[m
+[36m@@ -3985,8 +3985,15 @@[m [mclass FirestoreService {[m
+     };[m
+     try {[m
+       const primary = await readFeesFrom(feesCollection);[m
+[31m-      if (primary.length > 0) return primary;[m
+[31m-      return readFeesFrom(alternateFeesCollection).catch(() => []);[m
+[32m+[m[32m      const alternate = await readFeesFrom(alternateFeesCollection);[m
+[32m+[m[32m      const allFees = [...primary];[m
+[32m+[m[32m      const existingIds = new Set(allFees.map((f) => f.id));[m
+[32m+[m[32m      for (const fee of alternate) {[m
+[32m+[m[32m        if (!existingIds.has(fee.id)) {[m
+[32m+[m[32m          allFees.push(fee);[m
+[32m+[m[32m        }[m
+[32m+[m[32m      }[m
+[32m+[m[32m      return allFees;[m
+     } catch (error) {[m
+       console.warn("[mockDb] getFees primary query failed, trying alternate", error);[m
+       return readFeesFrom(alternateFeesCollection).catch((alternateError) => {[m
+[36m@@ -4178,8 +4185,15 @@[m [mclass FirestoreService {[m
+     };[m
+     try {[m
+       const primary = await readLedgersFrom(ledgerCollection);[m
+[31m-      if (primary.length > 0) return primary;[m
+[31m-      return readLedgersFrom(alternateLedgerCollection).catch(() => []);[m
+[32m+[m[32m      const alternate = await readLedgersFrom(alternateLedgerCollection);[m
+[32m+[m[32m      const allLedgers = [...primary];[m
+[32m+[m[32m      const existingIds = new Set(allLedgers.map((l) => l.id));[m
+[32m+[m[32m      for (const ledger of alternate) {[m
+[32m+[m[32m        if (!existingIds.has(ledger.id)) {[m
+[32m+[m[32m          allLedgers.push(ledger);[m
+[32m+[m[32m        }[m
+[32m+[m[32m      }[m
+[32m+[m[32m      return allLedgers;[m
+     } catch (error) {[m
+       console.warn("[mockDb] getStudentLedgers primary query failed, trying alternate", error);[m
+       return readLedgersFrom(alternateLedgerCollection).catch((alternateError) => {[m
+[36m@@ -4259,8 +4273,15 @@[m [mclass FirestoreService {[m
+     };[m
+     try {[m
+       const primary = await readPaymentsFrom(paymentsCollection);[m
+[31m-      if (primary.length > 0) return primary;[m
+[31m-      return readPaymentsFrom(alternatePaymentsCollection).catch(() => []);[m
+[32m+[m[32m      const alternate = await readPaymentsFrom(alternatePaymentsCollection);[m
+[32m+[m[32m      const allPayments = [...primary];[m
+[32m+[m[32m      const existingIds = new Set(allPayments.map((p) => p.id));[m
+[32m+[m[32m      for (const payment of alternate) {[m
+[32m+[m[32m        if (!existingIds.has(payment.id)) {[m
+[32m+[m[32m          allPayments.push(payment);[m
+[32m+[m[32m        }[m
+[32m+[m[32m      }[m
+[32m+[m[32m      return allPayments;[m
+     } catch (error) {[m
+       console.warn("[mockDb] getPayments primary query failed, trying alternate", error);[m
+       return readPaymentsFrom(alternatePaymentsCollection).catch((alternateError) => {[m
