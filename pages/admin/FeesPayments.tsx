@@ -826,7 +826,10 @@ const FeesPayments: React.FC = () => {
         safetyCounter += 1;
 
         if (!renderedFirstPage && requestId === financeRequestIdRef.current) {
-          setStudents(loaded);
+          // Pass a copy: `loaded` keeps mutating as later pages arrive, and
+          // the final snapshot reuses the same array — React would bail out
+          // on the identical reference and leave a stale first-page render.
+          setStudents([...loaded]);
           renderedFirstPage = true;
         }
       }

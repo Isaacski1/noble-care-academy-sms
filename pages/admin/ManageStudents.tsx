@@ -506,7 +506,9 @@ const ManageStudents = () => {
         safetyCounter += 1;
 
         if (!renderedFirstPage) {
-          setStudents(data);
+          // Copy: `data` keeps mutating across pages; handing React the same
+          // array reference makes the final setState bail out.
+          setStudents([...data]);
           renderedFirstPage = true;
         }
       }

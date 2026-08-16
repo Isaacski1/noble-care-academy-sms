@@ -14,6 +14,10 @@ import {
   createTermRolloverService,
   TERM_ROLLOVER_INTERVAL_MS,
 } from "./termRollover.js";
+import {
+  createPaymentVerificationService,
+  PaymentVerificationError,
+} from "./paymentVerification.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2885,6 +2889,10 @@ const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || "";
 const PLATFORM_FEE_PERCENTAGE = 2.5;
 const SCHOOL_SETTLEMENT_PERCENTAGE = 100 - PLATFORM_FEE_PERCENTAGE;
 const isLivePaystackSecret = () => /^sk_live_/i.test(String(PAYSTACK_SECRET_KEY || "").trim());
+// Production default: Paystack must use live keys. Set PAYSTACK_ALLOW_TEST_MODE=true
+// to explicitly permit sk_test_ keys (for local/QA testing only — never in production).
+const allowPaystackTestMode = () => String(process.env.PAYSTACK_ALLOW_TEST_MODE || "").toLowerCase() === "true";
+const paystackConfigReady = () => Boolean(PAYSTACK_SECRET_KEY) && (isLivePaystackSecret() || allowPaystackTestMode());
 const APP_VERSION = process.env.APP_VERSION || "1.0.0";
 const APP_ENV = process.env.APP_ENV || "development";
 const SUPERADMIN_GOOGLE_API_KEY = String(
@@ -15087,7 +15095,7 @@ app.post("/api/payments/initialize-fee-payment", authMiddleware, async (req, res
     if (!PAYSTACK_SECRET_KEY) {
       return res.status(500).json({ error: "Server missing Paystack configuration." });
     }
-    if (!isLivePaystackSecret()) {
+    if (!paystackConfigReady()) {
       return res.status(500).json({ error: "Server Paystack configuration is still in test mode." });
     }
 
@@ -15146,15 +15154,22 @@ app.post("/api/payments/initialize-fee-payment", authMiddleware, async (req, res
       return res.status(403).json({ error: "Forbidden." });
     }
 
+    // In test mode the school's live subaccount is not usable by the Paystack
+    // test API, and no real money moves — skip the payout-account checks and
+    // the subaccount split so the checkout flow can be exercised end-to-end.
+    const paystackTestMode = allowPaystackTestMode() && !isLivePaystackSecret();
+
     const paymentSettings = schoolData.paymentSettings || {};
     const subaccountCode = String(paymentSettings.subaccountCode || "").trim();
-    if (!subaccountCode) {
-      return res.status(400).json({ error: "The school has not configured an online payout account yet." });
-    }
-    if (paymentSettings.status !== "active" || paymentSettings.isVerified !== true) {
-      return res.status(400).json({
-        error: "The school's payout account is awaiting Paystack verification. Online payments will be available after verification.",
-      });
+    if (!paystackTestMode) {
+      if (!subaccountCode) {
+        return res.status(400).json({ error: "The school has not configured an online payout account yet." });
+      }
+      if (paymentSettings.status !== "active" || paymentSettings.isVerified !== true) {
+        return res.status(400).json({
+          error: "The school's payout account is awaiting Paystack verification. Online payments will be available after verification.",
+        });
+      }
     }
 
     const reference = `FEES-${String(studentId).slice(0, 5)}-${Date.now()}`;
@@ -15163,7 +15178,6 @@ app.post("/api/payments/initialize-fee-payment", authMiddleware, async (req, res
       amount: Math.round(amountNumber * 100),
       currency: "GHS",
       reference,
-      subaccount: subaccountCode,
       metadata: {
         studentId,
         studentName: studentName || studentData.name || "",
@@ -15175,6 +15189,9 @@ app.post("/api/payments/initialize-fee-payment", authMiddleware, async (req, res
         term,
       },
     };
+    if (!paystackTestMode) {
+      payload.subaccount = subaccountCode;
+    }
 
     const paystackRes = await fetch("https://api.paystack.co/transaction/initialize", {
       method: "POST",
@@ -15208,11 +15225,59 @@ app.post("/api/payments/initialize-fee-payment", authMiddleware, async (req, res
       reference,
       accessCode: paystackData.data.access_code,
       authorizationUrl: paystackData.data.authorization_url,
-      paystackMode: "live",
+      paystackMode: paystackTestMode ? "test" : "live",
     });
   } catch (err) {
     console.error("[Fee Payment Initialize Error]:", err.message);
     return res.status(500).json({ error: "Could not initialize payment." });
+  }
+});
+
+/**
+ * Verify a completed Paystack fee payment and record the authoritative
+ * student payment document(s) server-side.
+ * POST /api/payments/verify-and-record
+ */
+app.post("/api/payments/verify-and-record", authMiddleware, async (req, res) => {
+  try {
+    if (!paystackConfigReady()) {
+      return res
+        .status(500)
+        .json({ error: "Server Paystack configuration is unavailable." });
+    }
+
+    const verifyPaystackTransaction = async (reference) => {
+      const response = await fetch(
+        `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
+        {
+          headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` },
+          signal: AbortSignal.timeout(15000),
+        },
+      );
+      const payload = await response.json().catch(() => null);
+      if (!payload) return { ok: false, status: false };
+      return { ok: response.ok, status: payload.status === true, data: payload.data };
+    };
+
+    const paymentVerificationService = createPaymentVerificationService({
+      db: admin.firestore(),
+      FieldValue: admin.firestore.FieldValue,
+      verifyTransaction: verifyPaystackTransaction,
+    });
+
+    const result = await paymentVerificationService.verifyAndRecordPayment(
+      req.user,
+      req.body || {},
+    );
+    return res.json(result);
+  } catch (error) {
+    if (error instanceof PaymentVerificationError) {
+      return res
+        .status(error.httpStatus)
+        .json({ code: error.code, error: error.message });
+    }
+    console.error("[VerifyAndRecordPayment] Error:", error?.message || error);
+    return res.status(500).json({ error: "Could not verify and record this payment." });
   }
 });
 

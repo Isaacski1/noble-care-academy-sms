@@ -459,8 +459,39 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
         });
       }
 
-      for (const p of paymentsToRecord) {
-        await db.recordStudentPayment(p as StudentFeePayment);
+      // Record the payment server-side: the server verifies the Paystack
+      // reference and writes the authoritative payment document(s) itself.
+      // The browser must not write financial records directly.
+      const allocations = paymentsToRecord.map((p) => ({
+        feeId: p.feeId,
+        feeName: p.feeName,
+        amountPaid: p.amountPaid,
+        academicYear: p.academicYear,
+        term: p.term,
+      }));
+
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) {
+        throw new Error("Your login session has expired. Please sign in again.");
+      }
+
+      const verifyResponse = await fetch(`${API_BASE_URL}/api/payments/verify-and-record`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          reference,
+          schoolId: student.schoolId,
+          studentId: student.id,
+          allocations,
+        }),
+      });
+
+      const verifyResult = await verifyResponse.json().catch(() => ({}));
+      if (!verifyResponse.ok || verifyResult.success !== true) {
+        throw new Error(verifyResult.error || "We could not verify this payment with Paystack.");
       }
 
       await logActivity({
@@ -564,9 +595,13 @@ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
 
 
       setTimeout(() => { window.location.reload(); }, 2000);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error processing payment:", error);
-      showToast("Payment recorded. Please refresh.", { type: "warning" });
+      showToast(
+        error?.message ||
+          "We could not confirm this payment. If you were charged, please contact your school.",
+        { type: "error" },
+      );
     } finally {
       setLoading(false);
     }

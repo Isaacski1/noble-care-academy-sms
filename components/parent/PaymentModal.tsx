@@ -89,8 +89,8 @@ const PaymentModal: React.FC<PaymentModalProps> = ({
       if (!response.ok || !result.accessCode) {
         throw new Error(result.error || "Could not initialize payment.");
       }
-      if (result.paystackMode !== "live") {
-        throw new Error("Payment checkout is not in live mode. Please refresh and try again.");
+      if (result.paystackMode !== "live" && result.paystackMode !== "test") {
+        throw new Error("Payment checkout is not configured. Please refresh and try again.");
       }
 
       const paystack = new PaystackPop();

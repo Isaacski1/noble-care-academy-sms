@@ -334,10 +334,12 @@ service cloud.firestore {
     match /schools/{schoolId}/payments/{paymentId} {
       allow read, create, update, delete: if schoolAdminOwnsSchool(schoolId);
 
+      // Online (Paystack) payments are recorded server-side via
+      // /api/payments/verify-and-record (Admin SDK, bypasses rules).
+      // Parents must NOT create payment documents from the browser.
       allow create: if isAuthenticated() && (
-        isSuperAdmin() || 
-        (isSchoolAdmin() && userSchoolId() == schoolId) ||
-        isParent()
+        isSuperAdmin() ||
+        (isSchoolAdmin() && userSchoolId() == schoolId)
       );
       
       allow get: if schoolScopedRead(schoolId);
@@ -1176,10 +1178,12 @@ service cloud.firestore {
       allow create: if schoolAdminOwnsSchool(request.resource.data.schoolId);
       allow update, delete: if schoolAdminOwnsSchool(resource.data.schoolId);
 
+      // Online (Paystack) payments are recorded server-side via
+      // /api/payments/verify-and-record (Admin SDK, bypasses rules).
+      // Parents must NOT create payment documents from the browser.
       allow create: if isAuthenticated() && (
-        isSuperAdmin() || 
-        (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId) ||
-        isParent()
+        isSuperAdmin() ||
+        (isSchoolAdmin() && userSchoolId() == request.resource.data.schoolId)
       );
 
       // Resource-scoped read handles both document reads and queries.
