@@ -3738,15 +3738,24 @@ const AdminDashboard = () => {
                       Add Student
                     </Link>
                   )}
-                  {hasFeature("teacher_management") && (
-                    <Link
-                      to="/admin/teachers"
-                      className="inline-flex items-center justify-center gap-2 rounded-full border border-white/20 bg-white/12 px-4 py-2.5 text-sm font-semibold text-white/95 shadow-[0_10px_24px_-20px_rgba(15,23,42,0.16)] transition hover:-translate-y-0.5 hover:bg-white/16"
-                    >
-                      <Users size={16} />
-                      Add Staff
-                    </Link>
-                  )}
+{hasFeature("teacher_management") && (
+    <Link
+      to="/admin/teachers"
+      className={DASHBOARD_BUTTON_PRIMARY}
+    >
+      <Users size={16} />
+      Add Staff
+    </Link>
+  )}
+  {hasFeature("teacher_attendance") && (
+    <Link
+      to="/admin/teacher-attendance"
+      className={DASHBOARD_BUTTON_PRIMARY}
+    >
+      <Calendar size={16} />
+      Teacher Attendance
+    </Link>
+  )}
                   {hasFeature("backups") && (
                     <Link
                       to="/admin/backups"
