@@ -158,7 +158,7 @@ const TeacherAttendanceStats = () => {
                     {/* Teacher Header */}
                     <div className="mb-4 sm:mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="flex min-w-0 items-start gap-3 sm:gap-4">
-                        <UserAvatar user={{ ...teacher, name: teacher.teacherName }} size="lg" className="shrink-0 shadow-lg border-2 border-[#E6F0FA]" />
+                        <UserAvatar user={{ ...teacher, name: teacher.teacherName, photoUrl: teacher.photoUrl }} size="lg" className="shrink-0 shadow-lg border-2 border-[#E6F0FA]" />
                         <div className="min-w-0">
                           <h3 className="text-lg sm:text-xl font-bold text-slate-800 break-words">
                             {teacher.teacherName}

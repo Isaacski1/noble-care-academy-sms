@@ -3368,6 +3368,7 @@ class FirestoreService {
       analytics.push({
         teacherId: teacher.id,
         teacherName: teacher.fullName,
+        photoUrl: teacher.photoUrl,
         overallAttendance,
         monthlyBreakdown,
         termStartDate: startDate,

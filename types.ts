@@ -812,6 +812,7 @@ export interface MonthlyTeacherAttendance {
 export interface TeacherAttendanceAnalytics {
   teacherId: string;
   teacherName: string;
+  photoUrl?: string;
   overallAttendance: number;
   monthlyBreakdown: MonthlyTeacherAttendance[];
   termStartDate: string;
