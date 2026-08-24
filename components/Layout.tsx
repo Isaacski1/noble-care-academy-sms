@@ -29,6 +29,7 @@ import UserAvatar from "./UserAvatar";
 import SchoolAssistantDrawer, {
   SchoolAssistantLauncher,
 } from "./SchoolAssistantDrawer";
+import ConnectionStatusIndicator from "./ConnectionStatusIndicator";
 import { showToast } from "../services/toast";
 
 import {
@@ -710,6 +711,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title }) => {
       }
       className="h-screen bg-[#fafafa] flex overflow-hidden transition-colors duration-300"
     >
+      <ConnectionStatusIndicator />
       {/* Mobile Overlay */}
       {sidebarOpen && (
         <div
