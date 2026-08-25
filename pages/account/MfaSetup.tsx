@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import QRCode from "qrcode";
 import {
@@ -161,6 +161,17 @@ const MfaSetup: React.FC = () => {
     }
     if (!currentUser.emailVerified) {
       setError("Verify your email address before setting up MFA.");
+      return;
+    }
+
+    // Check if a TOTP factor is already enrolled
+    const existingTotpFactor = enrolledFactors.find(
+      (factor) => factor.factorId === TotpMultiFactorGenerator.FACTOR_ID,
+    );
+    if (existingTotpFactor) {
+      setError(
+        "An authenticator app is already enrolled. Remove the existing one first before adding a new one.",
+      );
       return;
     }
 
@@ -915,7 +926,7 @@ const MfaSetup: React.FC = () => {
               <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
                 <strong>Keep access to your authenticator app.</strong> Do not
                 delete its School Manager GH entry after setup. If the QR code
-                will not scan—or you are using the same phone—use
+                will not scanâ€”or you are using the same phoneâ€”use
                 <strong> Copy Setup Key</strong> and the app's manual setup
                 option. Never share the QR code, setup key, or 6-digit code with
                 another person.
@@ -972,3 +983,25 @@ const MfaSetup: React.FC = () => {
 };
 
 export default MfaSetup;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
