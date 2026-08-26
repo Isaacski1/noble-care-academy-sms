@@ -19,6 +19,7 @@ import { showToast } from "../../services/toast";
 import { useAuth } from "../../context/AuthContext";
 import { requireSchoolId } from "../../services/authProfile";
 import { logActivity } from "../../services/activityLog";
+import { getClassRoomLabel } from "../../services/classCatalog";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const BUILT_IN_SLOT_TYPES = [
@@ -73,7 +74,7 @@ const Timetable = () => {
   const { user } = useAuth();
   const schoolId = requireSchoolId(user);
 
-  const { classes: availableClasses } = useSchoolClasses();
+  const { classes: availableClasses, allClasses, getClassName } = useSchoolClasses(true);
 
   const [selectedClass, setSelectedClass] = useState("");
   const [timetable, setTimetable] = useState<Record<string, TimeSlot[]>>({});
@@ -96,7 +97,12 @@ const Timetable = () => {
       setLoading(true);
 
       // 1. Fetch subjects from system settings for selected class
-      const currentSubjects = await db.getSubjects(schoolId, selectedClass);
+      // 1. Find the class config to get the baseClassId for subjects lookup
+      const classConfig = allClasses.find((c) => c.id === selectedClass);
+      const subjectLookupClassId = classConfig?.baseClassId || selectedClass;
+      
+      // Fetch subjects from system settings for the base class
+      const currentSubjects = await db.getSubjects(schoolId, subjectLookupClassId);
 
       setSubjects(currentSubjects);
       if (currentSubjects.length > 0) {
@@ -709,3 +715,14 @@ const Timetable = () => {
 };
 
 export default Timetable;
+
+
+
+
+
+
+
+
+
+
+

@@ -156,6 +156,8 @@ const SystemSettings = () => {
   const [subjectToDeleteName, setSubjectToDeleteName] = useState<string | null>(
     null,
   );
+  const [showDeleteClassStreamModal, setShowDeleteClassStreamModal] = useState(false);
+  const [classStreamToDelete, setClassStreamToDelete] = useState<{ id: string; name: string } | null>(null);
   const [showReportCardPreview, setShowReportCardPreview] = useState(false);
   const [showResetReportCardModal, setShowResetReportCardModal] =
     useState(false);
@@ -347,6 +349,59 @@ const SystemSettings = () => {
     };
     await saveClassRooms([...current, classRoom], `${name} created.`);
     setNewClassSection("");
+  };
+
+  const handleDeleteClassStream = async (classId: string) => {
+    // Check if class has assigned students
+    const assignedStudents = await db.getStudents(schoolId, classId);
+    if (assignedStudents.length > 0) {
+      showToast(
+        `Cannot delete: ${assignedStudents.length} student(s) are assigned to this class. Move them first.`,
+        { type: "error" },
+      );
+      return;
+    }
+
+    // Get class name for confirmation modal
+    const classRoom = getConfiguredClassRooms(
+      schoolId,
+      school?.schoolType,
+      config.classRooms,
+      true,
+    ).find((c) => c.id === classId);
+    
+    if (classRoom) {
+      setClassStreamToDelete({ id: classId, name: classRoom.name });
+      setShowDeleteClassStreamModal(true);
+    }
+  };
+
+  const confirmDeleteClassStream = async () => {
+    if (!classStreamToDelete) return;
+    
+    const { id: classId } = classStreamToDelete;
+    setShowDeleteClassStreamModal(false);
+    setClassStreamToDelete(null);
+
+    const current = getConfiguredClassRooms(
+      schoolId,
+      school?.schoolType,
+      config.classRooms,
+      true,
+    );
+    const filtered = current.filter((c) => c.id !== classId);
+    await saveClassRooms(filtered, "Class stream deleted.");
+
+    // Auto-cleanup: delete associated subjects and timetable
+    try {
+      // Delete subjects document
+      await deleteDoc(doc(firestore, "class_subjects", `${schoolId}_${classId}`));
+      
+      // Delete timetable document
+      await deleteDoc(doc(firestore, "timetables", `${schoolId}_${classId}`));
+    } catch (cleanupError) {
+      console.warn("Cleanup after class deletion:", cleanupError);
+    }
   };
 
   const handleClassRoomChange = async (
@@ -1734,8 +1789,17 @@ const SystemSettings = () => {
                             }
                             className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                           />
-                          Active
-                        </label>
+                          Active</label>
+                        <button
+                          type="button"
+                          disabled={savingClasses || classRoom.isActive === false}
+                          onClick={() => void handleDeleteClassStream(classRoom.id)}
+                          className="rounded-lg border border-rose-200 p-2 text-rose-500 hover:bg-rose-50 disabled:opacity-30 disabled:cursor-not-allowed"
+                          aria-label={`Delete ${classRoom.name}`}
+                          title="Delete class stream"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       </div>
                     </div>
                     <div className="mt-3">
@@ -2873,7 +2937,56 @@ const SystemSettings = () => {
           </div>
         </div>
       )}
-    </Layout>
+    
+      {/* Delete Class Stream Confirmation Modal */}
+      {showDeleteClassStreamModal && classStreamToDelete && (
+        <div className="fixed inset-0 bg-slate-900 bg-opacity-30 flex items-center justify-center z-50 transition-opacity duration-300">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4 transform transition-all duration-300 scale-100">
+            <div className="flex items-center mb-4">
+              <AlertTriangle className="text-red-600 mr-3" size={32} />
+              <h2 className="text-xl font-bold text-slate-800">
+                Delete Class Stream
+              </h2>
+            </div>
+            <p className="text-slate-600 mb-6">
+              Are you sure you want to delete the class stream "
+              <strong>{classStreamToDelete.name}</strong>"? This will also
+              remove its associated subjects and timetable. This action cannot
+              be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowDeleteClassStreamModal(false);
+                  setClassStreamToDelete(null);
+                }}
+                className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteClassStream}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Delete Class Stream
+              </button>
+            </div>
+          </div>
+        </div>
+      )}</Layout>
   );
 };
 export default SystemSettings;
+
+
+
+
+
+
+
+
+
+
+
+
+
