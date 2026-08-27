@@ -446,6 +446,12 @@ export interface SchoolConfig {
     D: number;
   };
   positionRule?: "total" | "average" | "subject";
+  assessmentScoreWeights?: {
+    testScore: number;
+    homeworkScore: number;
+    projectScore: number;
+    examScore: number;
+  };
   classRooms?: ClassRoom[];
   reportCardSettings?: ReportCardSettings;
   notificationSettings?: {
@@ -457,16 +463,7 @@ export interface SchoolConfig {
     enableInvoiceNotifications?: boolean;
   };
 }
-
 export type BackupType =
-  | "term-reset"
-  | "manual"
-  | "safety-restore"
-  | "recovery-point"
-  | "recycle-bin";
-
-export type RecoveryCollectionName =
-  | "settings"
   | "students"
   | "attendance"
   | "teacher_attendance"
@@ -484,6 +481,7 @@ export type RecoveryCollectionName =
   | "payments"
   | "finance_settings";
 
+export type RecoveryCollectionName = BackupType;
 export type RecoveryRestoreMode = "replace" | "merge";
 
 export interface RecoveryCollectionScope {
@@ -818,3 +816,4 @@ export interface TeacherAttendanceAnalytics {
   termStartDate: string;
   vacationDate?: string;
 }
+

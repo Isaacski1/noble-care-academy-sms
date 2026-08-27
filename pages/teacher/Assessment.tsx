@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Layout from "../../components/Layout";
 import { useAuth } from "../../context/AuthContext";
 import { useSchool } from "../../context/SchoolContext";
@@ -101,15 +101,21 @@ const AssessmentPage = () => {
   const [schoolConfig, setSchoolConfig] = useState<{
     currentTerm: string;
     academicYear: string;
+    assessmentScoreWeights?: {
+      testScore: number;
+      homeworkScore: number;
+      projectScore: number;
+      examScore: number;
+    };
   }>({ currentTerm: `Term ${CURRENT_TERM}`, academicYear: ACADEMIC_YEAR });
 
-  // Score Limits
-  const LIMITS = {
-    testScore: 15,
-    homeworkScore: 15,
-    projectScore: 20,
-    examScore: 100,
-  };
+  // Score Limits - use dynamic weights from school config, with defaults
+  const LIMITS = React.useMemo(() => ({
+    testScore: schoolConfig.assessmentScoreWeights?.testScore ?? 15,
+    homeworkScore: schoolConfig.assessmentScoreWeights?.homeworkScore ?? 15,
+    projectScore: schoolConfig.assessmentScoreWeights?.projectScore ?? 20,
+    examScore: schoolConfig.assessmentScoreWeights?.examScore ?? 100,
+  }), [schoolConfig.assessmentScoreWeights]);
 
   // Initialize selected class
   useEffect(() => {
@@ -127,6 +133,7 @@ const AssessmentPage = () => {
         setSchoolConfig({
           currentTerm: cfg.currentTerm || `Term ${CURRENT_TERM}`,
           academicYear: cfg.academicYear || ACADEMIC_YEAR,
+          assessmentScoreWeights: cfg.assessmentScoreWeights,
         });
       } catch (e) {
         console.error("Failed to load school config", e);
@@ -451,7 +458,7 @@ const AssessmentPage = () => {
                   Student Name
                 </th>
                 <th className="px-2 py-3 w-24 text-center">
-                  Class Test
+                  Class Score
                   <br />
                   <span className="text-[10px] normal-case font-bold text-emerald-600">
                     (15)
@@ -592,3 +599,18 @@ const AssessmentPage = () => {
 };
 
 export default AssessmentPage;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

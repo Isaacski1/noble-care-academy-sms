@@ -25,11 +25,9 @@ const DEMO_VIDEOS: DemoVideo[] = [
   { id: "people", title: "Manage Students, Classes and Teachers", description: "Add school records, organize classes, and assign teachers.", category: "School Admin", duration: "4 min", youtubeUrl: "https://youtu.be/2WFuuqAaSwo" },
   { id: "fees", title: "Fees, Payments and Balances", description: "Create fee items, record payments, follow balances, and read finance reports.", category: "School Admin", duration: "7:29 min", youtubeUrl: "https://youtu.be/mP-U5lo5Tm0" },
   { id: "sms", title: "Send SMS Reminders to Parents", description: "Filter recipients by class, compose a message, review cost, and send safely.", category: "School Admin", duration: "7:35 min", youtubeUrl: "https://youtu.be/A5vFnlYQjoQ" },
-  { id: "reports", title: "Account Security", description: "Secure accounts with multi-factor authentication (MFA) and manage security settings.", category: "School Admin", duration: "5–7 min", youtubeUrl: "" },
   { id: "teacher", title: "Teacher Dashboard Tour", description: "See assigned classes, classroom information, and the daily teacher workflow.", category: "Teacher", duration: "6 min", youtubeUrl: "https://youtu.be/_0FnFQHlz0g" },
-  { id: "attendance", title: "Attendance and Academic Records", description: "Take attendance and manage academic records for an assigned class.", category: "Teacher", duration: "5–7 min", youtubeUrl: "" },
-  { id: "parent", title: "Parent Dashboard Tour", description: "View a ward's school information, attendance, fees, and notices.", category: "Parent", duration: "4–6 min", youtubeUrl: "" },
-  { id: "notices", title: "Parent Notices and School Updates", description: "See how families receive communication and important updates.", category: "Parent", duration: "3–5 min", youtubeUrl: "" },
+  { id: "attendance", title: "Attendance and Academic Records", description: "Take attendance and manage academic records for an assigned class.", category: "Teacher", duration: "11 min", youtubeUrl: "https://youtu.be/StPMSaJ_I7I" },
+  { id: "parent", title: "Parent Dashboard Tour", description: "View a ward's school information, attendance, fees, and notices.", category: "Parent", duration: "4–6 min", youtubeUrl: "https://youtu.be/OyUtL4sToro" },
 ];
 
 const getEmbedUrl = (value: string) => {

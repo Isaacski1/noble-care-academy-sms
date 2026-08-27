@@ -1816,7 +1816,14 @@ app.post("/api/auth/parent-login", authLimiter, async (req, res) => {
           digits.endsWith(loginDigits))
       );
     };
-    const firstMatchData = matches[0].data() || {};
+    if (!matches || matches.length === 0) {
+      return res.status(401).json({
+        success: false,
+        error: "Invalid login credentials. Please verify the phone number and your child's Date of Birth."
+      });
+    }
+    const firstMatch = matches[0];
+    const firstMatchData = firstMatch?.data ? firstMatch.data() : firstMatch.data || {};
     const matchedContact = phoneMatchesLogin(firstMatchData.fatherPhone)
       ? {
           role: "father",
@@ -16779,3 +16786,6 @@ server.on("error", (err) => {
   console.error("Server failed to start:", err);
   process.exit(1);
 });
+
+
+
