@@ -1,0 +1,178 @@
+import admin from 'firebase-admin';
+import { initializeApp, cert } from 'firebase-admin/app';
+import { getFirestore, Timestamp, FieldValue } from 'firebase-admin/firestore';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// Load environment variables
+import dotenv from 'dotenv';
+dotenv.config({ path: path.join(process.cwd(), '.env') });
+dotenv.config({ path: path.join(process.cwd(), 'server', '.env') });
+dotenv.config({ path: path.join(process.cwd(), 'server', '.env.local') });
+
+const WRITE = process.argv.includes('--write');
+const VERBOSE = process.argv.includes('--verbose');
+
+if (!VERBOSE) {
+  console.log(`Migration script running in ${WRITE ? "write" : "dry-run"} mode.`);
+  console.log('To actually write to Firestore, run with --write flag.');
+  console.log('');
+}
+
+// Initialize Firebase Admin SDK
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY || '{}');
+if (!serviceAccount.project_id) {
+  console.error('ERROR: Firebase service account not found in FIREBASE_SERVICE_ACCOUNT_KEY environment variable.');
+  process.exit(1);
+}
+
+initializeApp({
+  credential: cert(serviceAccount)
+});
+
+const db = getFirestore();
+
+const log = (message) => {
+  if (VERBOSE) {
+    console.log(message);
+  }
+};
+
+const updateDocWithRetry = async (docRef, data, maxRetries = 3) => {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      await docRef.set(data, { merge: true });
+      return true;
+    } catch (error) {
+      if (attempt === maxRetries - 1) {
+        throw error;
+      }
+      // Wait for a short time before retrying (exponential backoff)
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 100));
+    }
+  }
+  return false;
+};
+
+const runMigration = async () => {
+  let processed = 0;
+  let updated = 0;
+  let skipped = 0;
+  let failed = 0;
+  let uncertainCreatedAtFallback = 0;
+
+  try {
+    // Step 1: Get all schools that have financeSettings with financeVersion === 'v2'
+    const schoolsSnapshot = await db.collectionGroup('financeSettings').where('financeVersion', '==', 'v2').get();
+    
+    if (schoolsSnapshot.empty) {
+      console.log('No schools found with financeVersion v2. Migration complete.');
+      return;
+    }
+
+    const schoolIds = new Set();
+    schoolsSnapshot.forEach(doc => {
+      // The financeSettings document is under schools/{schoolId}/financeSettings/main
+      const schoolId = doc.ref.parent.parent.id;
+      schoolIds.add(schoolId);
+    });
+
+console.log(`Found ${schoolIds.size} schools with financeVersion v2.`);
+
+    // Step 2: For each school, get the feeLedgers subcollection
+    for (const schoolId of schoolIds) {
+      log(Processing school ...);
+      const ledgersCollection = db.collection('schools').doc(schoolId).collection('feeLedgers');
+      const ledgersSnapshot = await ledgersCollection.get();
+      
+      if (ledgersSnapshot.empty) {
+        log(  No feeLedgers found for school .);
+        continue;
+      }
+
+      log(  Found  feeLedger documents for school .);
+
+      for (const docSnap of ledgersSnapshot.docs) {
+        processed++;
+        const ledgerData = docSnap.data();
+        let needsUpdate = false;
+        const updateData = {};
+
+        // Calculate totalFee from fees array
+        const fees = ledgerData.fees || [];
+        const totalFee = fees.reduce((sum, fee) => sum + (fee.amount || 0), 0);
+        
+        // Check if totalFee is missing or incorrect
+        if (typeof ledgerData.totalFee !== 'number' || ledgerData.totalFee !== totalFee) {
+          updateData.totalFee = totalFee;
+          needsUpdate = true;
+          log(    Ledger : totalFee mismatch (stored: , calculated: ). Marking for update.);
+        }
+
+        // Check createdAt
+        let createdAt = ledgerData.createdAt;
+        let createdAtValid = false;
+        
+        if (createdAt instanceof admin.firestore.Timestamp) {
+          createdAtValid = true;
+        } else if (typeof createdAt === 'number' && createdAt > 0) {
+          // Convert number to Timestamp if it looks like a valid UNIX timestamp in milliseconds
+          const date = new Date(createdAt);
+          if (!isNaN(date.getTime())) {
+            createdAtValid = true;
+            // Convert to Timestamp for consistency
+            updateData.createdAt = Timestamp.fromDate(date);
+            needsUpdate = true;
+            log(    Ledger : createdAt is a number, converting to Timestamp.);
+          }
+        }
+
+        if (!createdAtValid) {
+          uncertainCreatedAtFallback++;
+          // Use the document's create time as the most defensible historical timestamp
+          const createTime = docSnap.createTime; // This is a Timestamp
+          updateData.createdAt = createTime;
+          needsUpdate = true;
+          log(    Ledger : createdAt missing or invalid, using document create time: );
+        }
+
+        if (needsUpdate) {
+          if (WRITE) {
+            try {
+              await updateDocWithRetry(docSnap.ref, updateData);
+              updated++;
+              log(    Ledger : updated successfully.);
+            } catch (error) {
+              failed++;
+console.error(`    Ledger ${docSnap.id}: failed to update: ${error}`);
+            }
+          } else {
+            // Dry run: just count as updated
+            updated++;
+            log(    Ledger : would be updated (dry run).);
+          }
+        } else {
+          skipped++;
+          log(    Ledger : already correct.);
+        }
+      }
+    }
+
+    console.log('');
+    console.log('Migration Summary:');
+    console.log(  Processed: );
+    console.log(  Updated: );
+    console.log(  Skipped (already correct): );
+    console.log(  Failed: );
+    console.log(  Documents with uncertain createdAt fallback: );
+    
+  } catch (error) {
+    console.error('Migration failed with error:', error);
+    process.exit(1);
+  }
+};
+
+runMigration();
+
+
+

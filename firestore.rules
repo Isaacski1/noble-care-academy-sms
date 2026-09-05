@@ -415,19 +415,12 @@ service cloud.firestore {
     }
 
     // Settings collection (per school config)
-    match /settings/{document} {
-      // Super admin can read/write all settings
-      allow read, write: if isSuperAdmin();
-
-      // School admin can read/write their school's settings
-      allow read, write: if isSchoolAdmin() && userSchoolId() == document;
-
-      // Teachers need read access to load term/session settings on their dashboard.
-      allow read: if isTeacher() && userSchoolId() == document;
-
-      // Parents need read access to see school-specific dates and config on dashboard
-      allow read, get: if isAuthenticated();
-    }
+match /settings/{document} {
+  allow read, write: if isSuperAdmin();
+  allow read, write: if isSchoolAdmin() && userSchoolId() == document;
+  allow read: if isTeacher() && userSchoolId() == document;
+  allow read: if isParent() && userSchoolId() == document;
+}
 
     // Field whitelisting helpers
     function onlyAllowedFields(allowed) {
@@ -1223,12 +1216,19 @@ service cloud.firestore {
     }
 
     // Analytics events (super admin + school scoped)
-    match /analyticsEvents/{eventId} {
-      allow create: if isAuthenticated();
-      allow read: if isAuthenticated() &&
-        (isSuperAdmin() || schoolScopedRead(resource.data.schoolId));
-      allow update, delete: if isSuperAdmin();
-    }
+match /analyticsEvents/{eventId} {
+  allow create: if isAuthenticated() &&
+    (
+      isSuperAdmin() ||
+      request.resource.data.schoolId == userSchoolId()
+    );
+  allow read: if isAuthenticated() &&
+    (
+      isSuperAdmin() ||
+      schoolScopedRead(resource.data.schoolId)
+    );
+  allow update, delete: if isSuperAdmin();
+}
 
     // Backups collection
     match /backups/{backupId} {

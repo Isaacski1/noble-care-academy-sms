@@ -1,0 +1,832 @@
+export enum UserRole {
+  SUPER_ADMIN = "super_admin",
+  SCHOOL_ADMIN = "school_admin",
+  TEACHER = "teacher",
+  PARENT = "parent",
+}
+
+export interface User {
+  id: string;
+  fullName: string;
+  email: string;
+  role: UserRole;
+  schoolId: string | null;
+  phoneNumber?: string;
+  assignedClassIds?: string[];
+  linkedStudentIds?: string[];
+  studentIds?: string[];
+  status: "active" | "inactive" | "trial_active";
+  emailVerified?: boolean;
+  createdAt?: Date;
+  lastLogin?: Date | number | string | null;
+  lastLoginAt?: number | null;
+  isActive?: boolean;
+  disabledAt?: Date | number | null;
+  disabledBy?: string | null;
+  disabledReason?: string | null;
+  tokenVersion?: number;
+  tokensRevokedAt?: Date | number | null;
+  forcedLogoutAt?: Date | number | null;
+  forcedLogoutBy?: string | null;
+  roleUpdatedAt?: Date | number | null;
+  roleUpdatedBy?: string | null;
+  photoUrl?: string;
+  parentContactRole?: "father" | "mother" | "guardian";
+  parentContactName?: string;
+}
+
+export interface School {
+  id: string;
+  name: string;
+  schoolAdminFullName?: string;
+  code: string;
+  logoUrl: string;
+  phone: string;
+  address: string;
+  status: "active" | "inactive" | "trial_active";
+  plan: "free" | "trial" | "monthly" | "termly" | "yearly";
+  planEndsAt: Date | null;
+  trialVacationPaused?: boolean;
+  trialVacationPausedAt?: Date | number | null;
+  subscriptionVacationPaused?: boolean;
+  subscriptionVacationPausedAt?: Date | number | null;
+  featurePlan?: "starter" | "standard";
+  createdAt: Date;
+  createdBy: string;
+  notes?: string;
+  subscription?: {
+    planId?: string;
+  };
+  billing?: {
+    startType?: "term_start" | "mid_term";
+    status?: string;
+    specialPricing?: {
+      enabled?: boolean;
+      amount?: number | null;
+      cycle?: "monthly" | "termly" | "yearly" | null;
+      note?: string;
+      createdAt?: Date | number | null;
+      createdBy?: string | null;
+      updatedAt?: Date | number | null;
+      updatedBy?: string | null;
+    };
+  };
+  smsWallet?: {
+    balance: number;
+    lastRechargeAt?: Date | number | null;
+  };
+  paymentSettings?: {
+    method?: "Bank" | "MoMo";
+    status?: "pending" | "pending_verification" | "active" | "error";
+    verificationStatus?: "pending" | "verified" | "inactive";
+    isVerified?: boolean;
+    paystackAccountName?: string;
+    subaccountCode?: string;
+    bankName?: string;
+    accountNumber?: string;
+    accountName?: string;
+    momoNetwork?: string;
+    momoNumber?: string;
+    momoName?: string;
+  };
+  limits?: {
+    maxStudents?: number;
+  };
+  studentsCount?: number;
+  schoolType?: string;
+  isDemo?: boolean;
+}
+
+export interface PlanConfig {
+  id: string;
+  name: string;
+  maxStudents: number;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
+export type FeeTerm = "Term 1" | "Term 2" | "Term 3";
+export type PaymentMethod = "Cash" | "MoMo" | "Bank";
+export type FeeFrequency = "one_time" | "per_term" | "per_year";
+export type FeeAppliesTo =
+  | "all_students"
+  | "base_class"
+  | "class"
+  | "selected_students"
+  | "new_students_only";
+export type OnboardingMode = "fresh_start" | "full_history";
+
+export interface FeeDefinition {
+  id: string;
+  schoolId: string;
+  feeName: string;
+  amount: number;
+  classId?: string | null;
+  baseClassId?: string | null;
+  academicYear: string;
+  term: FeeTerm;
+  feeFrequency?: FeeFrequency;
+  appliesTo?: FeeAppliesTo;
+  effectiveFromDate?: string | null;
+  dueDate?: string | null;
+  selectedStudentIds?: string[];
+  applyToAcademicYear?: string | null;
+  applyToTerm?: FeeTerm | null;
+  createdAt: Date | number;
+  createdBy: string;
+}
+
+export interface StudentFeeLedger {    totalFee: number;
+  id: string;
+  schoolId: string;
+  studentId: string;
+  classId: string;
+  academicYear: string;
+  term: FeeTerm;
+  fees: Array<{
+    feeId: string;
+    feeName: string;
+    amount: number;
+    openingPaidAmount?: number;
+    openingBalance?: number;
+    openingStatus?: "Paid" | "Part-paid" | "Unpaid";
+  }>;
+  openingPaidAmount?: number;
+  openingBalance?: number;
+  openingStatus?: "Paid" | "Part-paid" | "Unpaid";
+  openingDate?: string | null;
+  createdAt: Date | number;
+  updatedAt?: Date | number;
+}
+
+export interface StudentFeePayment {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  classId: string;
+  feeId: string;
+  feeName: string;
+  amountPaid: number;
+  paymentMethod: PaymentMethod;
+  receiptNumber?: string | null;
+  academicYear: string;
+  term: FeeTerm;
+  isOpeningPayment?: boolean;
+  createdAt: Date | number;
+  recordedBy: string;
+  adminReviewedAt?: Date | number;
+  adminReviewedBy?: string | null;
+}
+
+export interface FinanceSettings {
+  schoolId: string;
+  financeVersion: "v1" | "v2";
+  onboardingMode?: OnboardingMode;
+  onboardingDate?: string | null;
+}
+
+export type StaffPaymentMethod = "mobile_money" | "ghipss";
+export type PayrollRunStatus =
+  | "draft"
+  | "processing"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "cancelled";
+export type PayrollPaymentStatus =
+  | "draft"
+  | "pending"
+  | "success"
+  | "failed"
+  | "otp";
+
+export interface StaffPaymentProfile {
+  id: string;
+  schoolId: string;
+  staffId: string;
+  staffName: string;
+  staffEmail?: string | null;
+  staffPhoneNumber?: string | null;
+  paymentMethod: StaffPaymentMethod;
+  accountName: string;
+  accountNumberMasked: string;
+  bankCode: string;
+  bankName: string;
+  salaryAmount: number;
+  recipientCode?: string | null;
+  isVerified: boolean;
+  createdAt?: Date | number | null;
+  updatedAt?: Date | number | null;
+  updatedBy?: string | null;
+}
+
+export interface PayrollRun {
+  id: string;
+  schoolId: string;
+  period: string;
+  status: PayrollRunStatus;
+  totalAmount: number;
+  staffCount: number;
+  createdBy: string;
+  createdAt: Date | number;
+  updatedAt?: Date | number | null;
+  processedAt?: Date | number | null;
+}
+
+export interface PayrollPayment {
+  id: string;
+  schoolId: string;
+  payrollRunId: string;
+  staffId: string;
+  staffName: string;
+  amount: number;
+  recipientCode?: string | null;
+  transferReference?: string | null;
+  status: PayrollPaymentStatus;
+  failureReason?: string | null;
+  paidAt?: Date | number | null;
+  createdAt: Date | number;
+  updatedAt?: Date | number | null;
+}
+
+export type BroadcastType = "GENERAL" | "SYSTEM_UPDATE" | "MAINTENANCE";
+export type BroadcastPriority = "NORMAL" | "IMPORTANT" | "CRITICAL";
+export type BroadcastTargetType = "ALL" | "SCHOOLS";
+export type BroadcastStatus = "DRAFT" | "PUBLISHED" | "SCHEDULED";
+
+export interface PlatformBroadcast {
+  id: string;
+  title: string;
+  message: string;
+  type: BroadcastType;
+  priority: BroadcastPriority;
+  targetType: BroadcastTargetType;
+  targetSchoolIds?: string[];
+  createdAt: Date | number;
+  createdBy: string;
+  publishAt?: Date | number | null;
+  expiresAt?: Date | number | null;
+  status: BroadcastStatus;
+  version?: string;
+  whatsNew?: string[];
+  effectiveDate?: string | Date | number | null;
+  maintenanceStart?: string | Date | number | null;
+  maintenanceEnd?: string | Date | number | null;
+  maintenanceDowntime?: boolean;
+  audienceRoles?: UserRole[];
+  imageUrl?: string | null;
+  actionLabel?: string | null;
+  actionUrl?: string | null;
+  requireAcknowledgement?: boolean;
+  updatedAt?: Date | number | null;
+}
+
+export type LoginStatus = "SUCCESS" | "FAILED";
+export type SuspiciousSeverity = "LOW" | "MEDIUM" | "HIGH";
+export type SuspiciousStatus = "OPEN" | "RESOLVED";
+
+export interface SecurityLoginLog {
+  id: string;
+  userId?: string | null;
+  name?: string | null;
+  email?: string | null;
+  role?: UserRole | string | null;
+  schoolId?: string | null;
+  schoolName?: string | null;
+  timestamp: number;
+  userAgent?: string | null;
+  ipAddress?: string | null;
+  status: LoginStatus;
+  errorCode?: string | null;
+}
+
+export interface SuspiciousEvent {
+  id: string;
+  eventType: string;
+  severity: SuspiciousSeverity;
+  userId?: string | null;
+  schoolId?: string | null;
+  relatedLogIds?: string[];
+  createdAt: number;
+  status: SuspiciousStatus;
+  resolvedBy?: string | null;
+  resolvedAt?: number | null;
+  resolutionNote?: string | null;
+  metadata?: Record<string, any>;
+}
+
+export interface AuditLog {
+  id: string;
+  actionType: string;
+  actorId: string;
+  actorRole: UserRole | string;
+  targetType: "SCHOOL" | "USER" | "SUBSCRIPTION" | "SETTINGS" | "BROADCAST";
+  targetId?: string | null;
+  schoolId?: string | null;
+  timestamp: number;
+  metadata?: Record<string, any>;
+}
+
+export interface PlatformSecuritySettings {
+  enabledForSuperAdmins: boolean;
+  enabledForSchoolAdmins: boolean;
+  enforcementMode: "off" | "optional" | "required";
+  superAdminEnforcementMode?: "off" | "optional" | "required";
+  schoolAdminEnforcementMode?: "off" | "optional" | "required";
+  updatedAt: number;
+  updatedBy: string;
+}
+
+export type DailyCollectionStatus =
+  | "paid"
+  | "partial"
+  | "unpaid"
+  | "absent"
+  | "exempt";
+
+export type DailyBillingMode = "pay_as_you_go" | "daily_debt";
+
+export interface DailyFeeDefinition {
+  id: string;
+  schoolId: string;
+  name: string;
+  amount: number;
+  classId?: string | null;
+  billingMode: DailyBillingMode;
+  active: boolean;
+  createdAt: Date | number;
+  createdBy: string;
+}
+
+export interface DailyCollectionRecord {
+  id: string;
+  schoolId: string;
+  date: string;
+  classId: string;
+  studentId: string;
+  feeId: string;
+  feeName: string;
+  expectedAmount: number;
+  amountPaid: number;
+  status: DailyCollectionStatus;
+  paymentMethod: PaymentMethod;
+  billingMode: DailyBillingMode;
+  note?: string | null;
+  createdAt: Date | number;
+  updatedAt?: Date | number;
+  recordedBy: string;
+  batchId?: string | null;
+}
+
+export type DailyCollectionBatchStatus =
+  | "draft"
+  | "submitted"
+  | "returned"
+  | "confirmed"
+  | "confirmed_with_difference"
+  | "rejected";
+
+export interface DailyCollectionBatch {
+  id: string;
+  schoolId: string;
+  date: string;
+  classId: string;
+  feeId: string;
+  feeName: string;
+  teacherId: string;
+  teacherName: string;
+  expectedAmount: number;
+  reportedAmount: number;
+  reportedCash: number;
+  reportedMomo: number;
+  reportedBank: number;
+  studentCount: number;
+  paidCount: number;
+  status: DailyCollectionBatchStatus;
+  submittedAt?: Date | number | null;
+  receivedAmount?: number | null;
+  receivedCash?: number | null;
+  verifiedMomo?: number | null;
+  verifiedBank?: number | null;
+  difference?: number | null;
+  handoverReference?: string | null;
+  reviewNote?: string | null;
+  reviewedAt?: Date | number | null;
+  reviewedBy?: string | null;
+  reviewedByName?: string | null;
+  returnedAt?: Date | number | null;
+  returnReason?: string | null;
+  createdAt: Date | number;
+  updatedAt: Date | number;
+}
+
+export interface SchoolConfig {
+  schoolId: string;
+  schoolName: string;
+  academicYear: string;
+  currentTerm: string;
+  headTeacherRemark: string;
+  termEndDate: string;
+  schoolReopenDate: string;
+  vacationDate: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  logoUrl?: string;
+  nextTermBegins: string;
+  termTransitionProcessed: boolean;
+  holidayDates?: { date: string; reason?: string }[];
+  passMark?: number;
+  failMark?: number;
+  isPromotionalTerm?: boolean;
+  gradingScale?: {
+    A: number;
+    B: number;
+    C: number;
+    D: number;
+  };
+  positionRule?: "total" | "average" | "subject";
+  assessmentScoreWeights?: {
+    testScore: number;
+    homeworkScore: number;
+    projectScore: number;
+    examScore: number;
+  };
+  classRooms?: ClassRoom[];
+  reportCardSettings?: ReportCardSettings;
+  notificationSettings?: {
+    adminWhatsAppNumber?: string;
+    adminSmsNumber?: string;
+    enableWhatsAppNotifications?: boolean;
+    enableSmsNotifications?: boolean;
+    enablePaymentAlerts?: boolean;
+    enableInvoiceNotifications?: boolean;
+  };
+}
+export type BackupType =
+  | "students"
+  | "attendance"
+  | "teacher_attendance"
+  | "assessments"
+  | "student_remarks"
+  | "admin_remarks"
+  | "student_skills"
+  | "timetables"
+  | "users"
+  | "class_subjects"
+  | "notices"
+  | "admin_notifications"
+  | "fees"
+  | "student_ledgers"
+  | "payments"
+  | "finance_settings"
+  | "manual"
+  | "term-reset"
+  | "safety-restore"
+  | "recovery-point"
+  | "recycle-bin"
+  | "settings";
+
+export type RecoveryCollectionName = BackupType;
+export type RecoveryRestoreMode = "replace" | "merge";
+
+export interface RecoveryCollectionScope {
+  collection: RecoveryCollectionName;
+  restoreMode: RecoveryRestoreMode;
+  recordIds?: string[];
+  label?: string;
+}
+
+export interface RecoveryMeta {
+  title: string;
+  description?: string;
+  sourceAction?: string;
+  sourceModule?: string;
+  entityType?: string;
+  entityId?: string;
+  entityLabel?: string;
+  recordCount?: number;
+  collections?: RecoveryCollectionScope[];
+  expiresAt?: number | null;
+  restoredAt?: number | null;
+  restoredBy?: string | null;
+}
+
+export interface Backup {
+  id: string;
+  schoolId: string;
+  schoolName?: string;
+  timestamp: number; // Unix timestamp
+  term: string;
+  academicYear: string;
+  backupType?: BackupType;
+  dedupeKey?: string;
+  storageVersion?: number;
+  status?: "writing" | "verified" | "failed";
+  recordCounts?: Record<string, number>;
+  chunks?: Array<{ key: string; chunkIds: string[]; count: number }>;
+  recoveryMeta?: RecoveryMeta;
+  data?: {
+    // Make data optional
+    schoolConfig?: SchoolConfig;
+    schoolSettings?: SchoolConfig;
+    schoolProfile?: Partial<School> | null;
+    students?: Student[];
+    attendanceRecords?: AttendanceRecord[];
+    teacherAttendanceRecords?: TeacherAttendanceRecord[];
+    assessments?: Assessment[];
+    studentRemarks?: StudentRemark[];
+    adminRemarks?: AdminRemark[];
+    studentSkills?: StudentSkills[];
+    timetables?: ClassTimetable[];
+    users?: User[];
+    classSubjects?: ClassSubjectConfig[];
+    notices?: Notice[];
+    adminNotifications?: SystemNotification[];
+    activityLogs?: any[];
+    payments?: StudentFeePayment[];
+    billingPayments?: Array<Record<string, unknown>>;
+    fees?: FeeDefinition[];
+    studentLedgers?: StudentFeeLedger[];
+    financeSettings?: FinanceSettings | null;
+  };
+  dataCollectionRef?: string; // New field to store reference to subcollection
+}
+
+export interface ClassSubjectConfig {
+  schoolId: string;
+  classId: string;
+  subjects: string[];
+}
+
+export interface ClassRoom {
+  id: string;
+  schoolId: string;
+  name: string; // e.g., "Class 1-A", "JHS 1-B"
+  level: "CRECHE" | "NURSERY" | "KG" | "PRIMARY" | "JHS" | "SHS";
+  baseClassId?: string;
+  section?: string;
+  nextClassId?: string | null;
+  sortOrder?: number;
+  isActive?: boolean;
+}
+
+export type ReportCardTemplate = "classic" | "modern" | "compact";
+export type ReportCardLogoPosition = "left" | "center" | "right";
+
+export interface ReportCardSettings {
+  title: string;
+  template: ReportCardTemplate;
+  primaryColor: string;
+  accentColor: string;
+  headerStyle: "plain" | "band" | "boxed";
+  logoPosition: ReportCardLogoPosition;
+  showSchoolLogo: boolean;
+  showWatermarkLogo: boolean;
+  showStudentPhoto: boolean;
+  showPosition: boolean;
+  showAttendance: boolean;
+  showSkills: boolean;
+  showClassTeacherRemark: boolean;
+  showHeadTeacherRemark: boolean;
+  showGradingScale: boolean;
+  showPromotionStatus: boolean;
+  classTeacherSignatureLabel: string;
+  headTeacherSignatureLabel: string;
+  stampLabel: string;
+}
+
+export interface Student {
+  id: string;
+  schoolId: string;
+  name: string;
+  gender: "Male" | "Female";
+  dob: string;
+  classId: string;
+  
+  // Student Information (Ghana Standard)
+  homeTown?: string;
+  region?: string;
+  languagesSpoken?: string;
+  previousSchool?: string;
+  reasonForLeaving?: string;
+  dateOfLastAttendance?: string;
+  residentialAddress?: string;
+  digitalAddress?: string; // G.P.A Address
+  chronicDisease?: string;
+
+  // Father Information
+  fatherName?: string;
+  fatherOccupation?: string;
+  fatherPhone?: string;
+  fatherEducation?: string;
+  fatherAddress?: string;
+  fatherWhatsApp?: string;
+  fatherEmail?: string;
+
+  // Mother Information
+  motherName?: string;
+  motherOccupation?: string;
+  motherPhone?: string;
+  motherEducation?: string;
+  motherAddress?: string;
+  motherWhatsApp?: string;
+  motherEmail?: string;
+
+  // Guardian Information
+  guardianName: string;
+  guardianPhone: string;
+  guardianEmail?: string;
+  guardianOccupation?: string;
+  guardianEducation?: string;
+  guardianAddress?: string;
+  guardianWhatsApp?: string;
+
+  parentId?: string;
+  studentStatus?: "graduated" | "stopped" | "active";
+  createdAt?: Date | number;
+  photoUrl?: string;
+}
+
+export interface AttendanceRecord {
+  id: string;
+  schoolId: string;
+  date: string; // YYYY-MM-DD
+  classId: string;
+  presentStudentIds: string[];
+  isHoliday?: boolean;
+  holidayReason?: string;
+}
+
+export interface TeacherAttendanceRecord {
+  id: string;
+  schoolId: string;
+  date: string; // YYYY-MM-DD
+  teacherId: string;
+  status: "present" | "absent";
+  approvalStatus?: "pending" | "approved" | "rejected";
+  approvedBy?: string;
+  approvedAt?: number;
+  rejectedBy?: string;
+  rejectedAt?: number;
+  isHoliday?: boolean;
+  holidayReason?: string;
+}
+
+export interface Assessment {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  classId: string;
+  term: 1 | 2 | 3;
+  academicYear: string;
+  subject: string;
+  testScore: number; // Out of e.g., 20
+  homeworkScore: number;
+  projectScore: number;
+  examScore: number; // Out of e.g., 70
+  total?: number;
+}
+
+export interface ComputedGrade {
+  total: number;
+  grade: string; // A, B, C, D, F
+  remark: string; // Excellent, Very Good, etc.
+}
+
+export interface StudentRemark {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  classId: string;
+  term: 1 | 2 | 3;
+  academicYear: string;
+  remark: string;
+  behaviorTag: "Excellent" | "Good" | "Needs Improvement" | "";
+  teacherId: string;
+  dateCreated: string; // YYYY-MM-DD
+}
+
+export interface AdminRemark {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  classId: string;
+  term: 1 | 2 | 3;
+  academicYear: string;
+  remark: string;
+  adminId: string;
+  dateCreated: string; // YYYY-MM-DD
+}
+
+export interface StudentSkills {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  classId: string;
+  term: 1 | 2 | 3;
+  academicYear: string;
+  punctuality: "Excellent" | "Very Good" | "Good" | "Fair" | "Poor";
+  neatness: "Excellent" | "Very Good" | "Good" | "Fair" | "Poor";
+  conduct: "Excellent" | "Very Good" | "Good" | "Fair" | "Poor";
+  attitudeToWork: "Excellent" | "Very Good" | "Good" | "Fair" | "Poor";
+  classParticipation: "Excellent" | "Very Good" | "Good" | "Fair" | "Poor";
+  homeworkCompletion: "Excellent" | "Very Good" | "Good" | "Fair" | "Poor";
+}
+
+export interface Notice {
+  id: string;
+  schoolId: string;
+  message: string;
+  date: string;
+  type: "info" | "urgent";
+  createdAt?: number;
+}
+
+export interface ParentNotice {
+  id: string;
+  schoolId: string;
+  message: string;
+  date: string;
+  type: "info" | "urgent";
+  targetType: "all" | "class" | "students";
+  targetClassId?: string | null;
+  targetClassName?: string | null;
+  targetStudentIds?: string[];
+  recipientCount: number;
+  createdAt: number;
+  expiresAt?: number;
+  createdBy?: string | null;
+  createdByName?: string | null;
+  readAt?: number | null;
+  readByParentName?: string | null;
+  readByParentPhone?: string | null;
+}
+
+export interface SystemNotification {
+  id: string;
+  schoolId: string;
+  message: string;
+  createdAt: number; // Timestamp
+  isRead: boolean;
+  type: "attendance" | "assessment" | "system";
+}
+
+export interface TimeSlot {
+  id: string;
+  startTime: string; // e.g. "08:00"
+  endTime: string; // e.g. "09:00"
+  subject: string; // e.g. "Mathematics" or "Break"
+  type:
+    | "lesson"
+    | "break"
+    | "worship"
+    | "closing"
+    | "assembly"
+    | "arrival"
+    | "lunch"
+    | "snack"
+    | "cleaning"
+    | "games"
+    | "nap"
+    | "clubs"
+    | (string & {});
+}
+
+export interface ClassTimetable {
+  schoolId: string;
+  classId: string;
+  schedule: Record<string, TimeSlot[]>; // Key is Day name (Monday, Tuesday...)
+  customTypes?: string[];
+  updatedAt?: number;
+}
+
+export interface MonthlyTeacherAttendance {
+  teacherId: string;
+  teacherName: string;
+  month: string; // YYYY-MM format
+  year: number;
+  totalWorkingDays: number;
+  presentDays: number;
+  absentDays: number;
+  attendanceRate: number;
+  trend: "improving" | "declining" | "stable";
+}
+
+export interface TeacherAttendanceAnalytics {
+  teacherId: string;
+  teacherName: string;
+  photoUrl?: string;
+  overallAttendance: number;
+  monthlyBreakdown: MonthlyTeacherAttendance[];
+  termStartDate: string;
+  vacationDate?: string;
+}
+
+
+
+
+
+
+
+

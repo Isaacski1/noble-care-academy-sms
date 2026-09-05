@@ -1,0 +1,4473 @@
+import { auth, firestore } from "./firebase";
+import {
+  collection,
+  doc,
+  documentId,
+  getCountFromServer,
+  getDoc,
+  getDocs,
+  setDoc,
+  deleteDoc,
+  updateDoc,
+  writeBatch,
+  query,
+  where,
+  orderBy,
+  limit,
+  startAfter,
+  QueryConstraint, serverTimestamp, Timestamp,
+} from "firebase/firestore";
+import {
+  User,
+  UserRole,
+  Student,
+  AttendanceRecord,
+  TeacherAttendanceRecord,
+  Assessment,
+  Notice,
+  ClassTimetable,
+  SystemNotification,
+  MonthlyTeacherAttendance,
+  TeacherAttendanceAnalytics,
+  StudentRemark,
+  StudentSkills,
+  ClassSubjectConfig,
+  ClassRoom,
+  SchoolConfig,
+  AdminRemark,
+  Backup,
+  PlatformBroadcast,
+  FeeDefinition,
+  FeeTerm,
+  StudentFeeLedger,
+  StudentFeePayment,
+  PaymentMethod,
+  FinanceSettings,
+  DailyFeeDefinition,
+  DailyCollectionRecord,
+  DailyCollectionBatch,
+  School,
+  BackupType,
+  RecoveryCollectionName,
+  RecoveryCollectionScope,
+} from "../types";
+import { FeatureKey, hasFeature, resolveFeaturePlan } from "./featureAccess";
+import { logActivity } from "./activityLog";
+import {
+  collectHolidayDateKeys,
+  getExpectedSchoolDayKeys,
+} from "./schoolCalendar";
+import {
+  CURRENT_TERM,
+  ACADEMIC_YEAR,
+  CLASSES_LIST,
+  crecheSubjects,
+  nurserySubjects,
+  kgSubjects,
+  primarySubjects,
+  jhsSubjects,
+  getFilteredClasses,
+} from "../constants";
+
+type SchoolScopedPage<T> = {
+  items: T[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
+class FirestoreService {
+  private actorRoleCache: { uid: string; role: UserRole | null } | null = null;
+
+  private isPermissionDeniedError(error: unknown): boolean {
+    const message = String(
+      (error as any)?.code || (error as any)?.message || error || "",
+    );
+    return (
+      message.includes("permission-denied") ||
+      message.includes("Missing or insufficient permissions")
+    );
+  }
+
+  // Helper to get array from collection
+  private async getCollection<T>(collectionName: string): Promise<T[]> {
+    const querySnapshot = await getDocs(collection(firestore, collectionName));
+    return querySnapshot.docs.map((doc) => doc.data() as T);
+  }
+
+  private requireSchoolId(schoolId?: string, method = "operation"): string {
+    if (!schoolId) {
+      throw new Error(`schoolId is required for ${method}`);
+    }
+    return schoolId;
+  }
+
+  private async getCurrentActorRole(): Promise<UserRole | null> {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return null;
+    if (this.actorRoleCache?.uid === uid) {
+      return this.actorRoleCache.role;
+    }
+
+    try {
+      const userSnap = await getDoc(doc(firestore, "users", uid));
+      const role = userSnap.exists()
+        ? (((userSnap.data() as User).role as UserRole | undefined) ?? null)
+        : null;
+      this.actorRoleCache = { uid, role };
+      return role;
+    } catch (error) {
+      console.warn("Failed to resolve actor role for feature access", error);
+      return null;
+    }
+  }
+
+  private async isSuperAdminActor(): Promise<boolean> {
+    return (await this.getCurrentActorRole()) === UserRole.SUPER_ADMIN;
+  }
+
+  private async requireFeature(
+    schoolId?: string,
+    feature?: FeatureKey,
+  ): Promise<void> {
+    if (!feature) return;
+
+    try {
+      if (await this.isSuperAdminActor()) return;
+    } catch (error) {
+      // If we can't determine super admin status due to Firestore errors,
+      // fall back to allowing access to prevent dashboard from breaking
+      console.warn("Failed to check super admin status, using fallback", error);
+      return;
+    }
+
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      `requireFeature(${feature})`,
+    );
+
+    try {
+      const schoolSnap = await getDoc(doc(firestore, "schools", scopedSchoolId));
+      const school = schoolSnap.exists()
+        ? ({ id: schoolSnap.id, ...(schoolSnap.data() as any) } as School)
+        : null;
+      const plan = resolveFeaturePlan(school);
+      if (!hasFeature(plan, feature)) {
+        throw new Error("FEATURE_ACCESS_DENIED");
+      }
+    } catch (error) {
+      // If school config check fails due to Firestore errors, allow access
+      // This prevents the dashboard from completely breaking
+      console.warn(`Failed to verify feature access for "${feature}", allowing access`, error);
+      return;
+    }
+  }
+
+  private async requireFeatures(
+    schoolId?: string,
+    features: FeatureKey[] = [],
+  ): Promise<void> {
+    if (!features.length) return;
+
+    try {
+      if (await this.isSuperAdminActor()) return;
+    } catch (error) {
+      // If we can't determine super admin status due to Firestore errors,
+      // fall back to allowing access to prevent dashboard from breaking
+      console.warn("Failed to check super admin status, using fallback", error);
+      return;
+    }
+
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      `requireFeatures(${features.join(",")})`,
+    );
+
+    try {
+      const schoolSnap = await getDoc(doc(firestore, "schools", scopedSchoolId));
+      const school = schoolSnap.exists()
+        ? ({ id: schoolSnap.id, ...(schoolSnap.data() as any) } as School)
+        : null;
+      const plan = resolveFeaturePlan(school);
+      const missing = features.filter((feature) => !hasFeature(plan, feature));
+      if (missing.length > 0) {
+        throw new Error("FEATURE_ACCESS_DENIED");
+      }
+    } catch (error) {
+      // If school config check fails due to Firestore errors, allow access
+      // This prevents the dashboard from completely breaking
+      console.warn(`Failed to verify feature access for "${features.join(",")}", allowing access`, error);
+      return;
+    }
+  }
+
+  private async getCollectionBySchoolId<T>(
+    collectionName: string,
+    schoolId?: string,
+  ): Promise<T[]> {
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      `getCollectionBySchoolId(${collectionName})`,
+    );
+    const q = query(
+      collection(firestore, collectionName),
+      where("schoolId", "==", scopedSchoolId),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((doc) => doc.data() as T);
+  }
+
+  private resolvePageSize(
+    pageSize?: number,
+    fallback = 100,
+    max = 300,
+  ): number {
+    const parsed = Number(pageSize);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(1, Math.min(max, Math.floor(parsed)));
+  }
+
+  private async getCollectionBySchoolIdPage<T>(
+    collectionName: string,
+    schoolId: string,
+    options: {
+      pageSize?: number;
+      cursorId?: string | null;
+      constraints?: QueryConstraint[];
+      mapDoc?: (docSnap: any) => T;
+    } = {},
+  ): Promise<SchoolScopedPage<T>> {
+    const pageSize = this.resolvePageSize(options.pageSize, 100, 300);
+    const cursorId = String(options.cursorId || "").trim();
+    const constraints: QueryConstraint[] = [
+      where("schoolId", "==", schoolId),
+      ...(options.constraints || []),
+      orderBy(documentId()),
+      limit(pageSize + 1),
+    ];
+    if (cursorId) {
+      constraints.push(startAfter(cursorId));
+    }
+
+    const snap = await getDocs(
+      query(collection(firestore, collectionName), ...constraints),
+    );
+    const docs = snap.docs;
+    const hasMore = docs.length > pageSize;
+    const pageDocs = hasMore ? docs.slice(0, pageSize) : docs;
+    const mapDoc =
+      options.mapDoc ||
+      ((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() as any) }) as T);
+
+    return {
+      items: pageDocs.map((docSnap) => mapDoc(docSnap)),
+      nextCursor: hasMore
+        ? (pageDocs[pageDocs.length - 1]?.id as string | undefined) || null
+        : null,
+      hasMore,
+    };
+  }
+
+  private async getCollectionBySchoolIdWithDocId<T>(
+    collectionName: string,
+    schoolId: string,
+  ): Promise<T[]> {
+    const q = query(
+      collection(firestore, collectionName),
+      where("schoolId", "==", schoolId),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((docSnap) => {
+      const data = docSnap.data() as any;
+      return {
+        ...(data as T),
+        id: (data?.id as string | undefined) || docSnap.id,
+      } as T;
+    });
+  }
+
+  private async getCollectionAtPathWithDocId<T>(
+    collectionPath: string[],
+  ): Promise<T[]> {
+    const snap = await getDocs(collection(firestore, collectionPath.join("/")));
+    return snap.docs.map((docSnap) => {
+      const data = docSnap.data() as any;
+      return {
+        ...(data as T),
+        id: (data?.id as string | undefined) || docSnap.id,
+      } as T;
+    });
+  }
+
+  private dedupeRowsByKey<T>(
+    rows: T[] = [],
+    resolveKey: (row: T, index: number) => string,
+  ): T[] {
+    const deduped = new Map<string, T>();
+    rows.filter(Boolean).forEach((row, index) => {
+      const key = String(resolveKey(row, index) || "").trim();
+      if (!key) return;
+      const rowData = row as any;
+      deduped.set(key, rowData?.id ? row : ({ ...rowData, id: key } as T));
+    });
+    return Array.from(deduped.values());
+  }
+
+  private selectPreferredTeacherAttendanceRecord(
+    records: TeacherAttendanceRecord[] = [],
+  ): TeacherAttendanceRecord | undefined {
+    if (!records.length) return undefined;
+
+    const approvalRank = (status?: string) => {
+      switch (status) {
+        case "approved":
+          return 0;
+        case "rejected":
+          return 1;
+        case "pending":
+          return 2;
+        default:
+          return 3;
+      }
+    };
+
+    return [...records].sort((a, b) => {
+      const rankDiff =
+        approvalRank(a.approvalStatus) - approvalRank(b.approvalStatus);
+      if (rankDiff !== 0) return rankDiff;
+
+      const aTime =
+        (a as any).approvedAt ||
+        (a as any).rejectedAt ||
+        (a as any).createdAt ||
+        0;
+      const bTime =
+        (b as any).approvedAt ||
+        (b as any).rejectedAt ||
+        (b as any).createdAt ||
+        0;
+
+      return bTime - aTime;
+    })[0];
+  }
+
+  private dedupeTeacherAttendanceRecords(
+    records: TeacherAttendanceRecord[] = [],
+  ): TeacherAttendanceRecord[] {
+    const recordsByDate = new Map<string, TeacherAttendanceRecord[]>();
+
+    records.filter(Boolean).forEach((record) => {
+      const dateKey = String(record.date || "").trim();
+      if (!dateKey) return;
+      const existing = recordsByDate.get(dateKey) || [];
+      existing.push(record);
+      recordsByDate.set(dateKey, existing);
+    });
+
+    return Array.from(recordsByDate.values())
+      .map((group) => this.selectPreferredTeacherAttendanceRecord(group))
+      .filter(Boolean) as TeacherAttendanceRecord[];
+  }
+
+  private async getSchoolFinanceSnapshot(schoolId: string): Promise<{
+    fees: FeeDefinition[];
+    studentLedgers: StudentFeeLedger[];
+    financePayments: StudentFeePayment[];
+    billingPayments: Array<Record<string, unknown>>;
+    financeSettings: FinanceSettings | null;
+  }> {
+    const [
+      legacyFees,
+      v2Fees,
+      legacyLedgers,
+      v2Ledgers,
+      legacyPayments,
+      v2Payments,
+      financeSettingsSnap,
+    ] = await Promise.all([
+      this.getCollectionBySchoolIdWithDocId<FeeDefinition>(
+        "fees",
+        schoolId,
+      ).catch(() => []),
+      this.getCollectionAtPathWithDocId<FeeDefinition>([
+        "schools",
+        schoolId,
+        "fees",
+      ]).catch(() => []),
+      this.getCollectionBySchoolIdWithDocId<StudentFeeLedger>(
+        "student_ledgers",
+        schoolId,
+      ).catch(() => []),
+      this.getCollectionAtPathWithDocId<StudentFeeLedger>([
+        "schools",
+        schoolId,
+        "feeLedgers",
+      ]).catch(() => []),
+      this.getCollectionBySchoolIdWithDocId<Record<string, unknown>>(
+        "payments",
+        schoolId,
+      ).catch(() => []),
+      this.getCollectionAtPathWithDocId<Record<string, unknown>>([
+        "schools",
+        schoolId,
+        "payments",
+      ]).catch(() => []),
+      getDoc(
+        doc(firestore, "schools", schoolId, "financeSettings", "main"),
+      ).catch(() => null),
+    ]);
+
+    const fees = this.dedupeRowsByKey<FeeDefinition>(
+      [...legacyFees, ...v2Fees],
+      (row, index) => String(row.id || `fee_${index}`),
+    );
+    const studentLedgers = this.dedupeRowsByKey<StudentFeeLedger>(
+      [...legacyLedgers, ...v2Ledgers],
+      (row, index) => String(row.id || `ledger_${index}`),
+    );
+
+    const allPayments = this.dedupeRowsByKey<Record<string, unknown>>(
+      [...legacyPayments, ...v2Payments],
+      (row, index) =>
+        String(
+          row.id ||
+            row.reference ||
+            row.receiptNumber ||
+            row.transactionId ||
+            `payment_${index}`,
+        ),
+    );
+
+    const financePayments = allPayments.filter((row) =>
+      Boolean((row as any)?.studentId),
+    ) as unknown as StudentFeePayment[];
+    const billingPayments = allPayments.filter(
+      (row) => !(row as any)?.studentId,
+    );
+
+    const financeSettings =
+      financeSettingsSnap &&
+      "exists" in financeSettingsSnap &&
+      financeSettingsSnap.exists()
+        ? ({
+            ...(financeSettingsSnap.data() as Omit<FinanceSettings, "schoolId">),
+            schoolId,
+          } as FinanceSettings)
+        : null;
+
+    return {
+      fees,
+      studentLedgers,
+      financePayments,
+      billingPayments,
+      financeSettings,
+    };
+  }
+
+  private async getSchoolActivityLogs(schoolId: string): Promise<any[]> {
+    const snap = await getDocs(
+      collection(doc(firestore, "schools", schoolId), "activityLogs"),
+    );
+    return snap.docs.map((docSnap) => ({
+      id: docSnap.id,
+      ...(docSnap.data() as Record<string, unknown>),
+    }));
+  }
+
+  private async getSchoolProfileSnapshot(
+    schoolId: string,
+  ): Promise<Partial<School> | null> {
+    const snap = await getDoc(doc(firestore, "schools", schoolId));
+    if (!snap.exists()) {
+      return null;
+    }
+
+    const school = snap.data() as Partial<School>;
+    return this.stripUndefinedDeep<Partial<School>>({
+      id: schoolId,
+      name: school.name || "",
+      code: school.code || "",
+      logoUrl: school.logoUrl || "",
+      phone: school.phone || "",
+      address: school.address || "",
+      status: school.status,
+      plan: school.plan,
+      planEndsAt: school.planEndsAt,
+      featurePlan: school.featurePlan,
+      subscription: school.subscription,
+      billing: school.billing,
+      limits: school.limits,
+      studentsCount: school.studentsCount,
+      notes: school.notes,
+    });
+  }
+
+  private stripUndefinedDeep<T>(value: T): T {
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => this.stripUndefinedDeep(item))
+        .filter((item) => item !== undefined) as T;
+    }
+
+    if (!value || typeof value !== "object") {
+      return value;
+    }
+
+    if (Object.getPrototypeOf(value) !== Object.prototype) {
+      return value;
+    }
+
+    const cleaned = Object.entries(value as Record<string, unknown>).reduce(
+      (acc, [key, entryValue]) => {
+        if (entryValue === undefined) {
+          return acc;
+        }
+        acc[key] = this.stripUndefinedDeep(entryValue);
+        return acc;
+      },
+      {} as Record<string, unknown>,
+    );
+
+    return cleaned as T;
+  }
+
+  private async commitChunkedOperations(
+    operations: Array<(batch: ReturnType<typeof writeBatch>) => void>,
+    chunkSize = 350,
+  ): Promise<void> {
+    if (!operations.length) return;
+
+    for (let index = 0; index < operations.length; index += chunkSize) {
+      const batch = writeBatch(firestore);
+      operations.slice(index, index + chunkSize).forEach((operation) => {
+        operation(batch);
+      });
+      await batch.commit();
+    }
+  }
+
+  private async replaceSchoolScopedCollection<T extends { schoolId?: string }>(
+    collectionName: string,
+    schoolId: string,
+    rows: T[] = [],
+    resolveId: (row: T) => string,
+  ): Promise<void> {
+    const scopedRows = rows.filter(Boolean);
+    const existing = await getDocs(
+      query(
+        collection(firestore, collectionName),
+        where("schoolId", "==", schoolId),
+      ),
+    );
+    const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> =
+      [];
+
+    existing.docs.forEach((docSnap) => {
+      operations.push((batch) => batch.delete(docSnap.ref));
+    });
+
+    scopedRows.forEach((row) => {
+      const normalizedRow = { ...row, schoolId } as T;
+      operations.push((batch) =>
+        batch.set(
+          doc(firestore, collectionName, resolveId(normalizedRow)),
+          normalizedRow,
+        ),
+      );
+    });
+
+    await this.commitChunkedOperations(operations);
+  }
+
+  private async replaceCollectionAtPath<T>(
+    collectionPath: string[],
+    rows: T[] = [],
+    resolveId: (row: T) => string,
+  ): Promise<void> {
+    const collectionRef = collection(firestore, collectionPath.join("/"));
+    const existing = await getDocs(collectionRef);
+    const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> =
+      [];
+
+    existing.docs.forEach((docSnap) => {
+      operations.push((batch) => batch.delete(docSnap.ref));
+    });
+
+    rows.filter(Boolean).forEach((row) => {
+      operations.push((batch) =>
+        batch.set(doc(collectionRef, resolveId(row)), row as any),
+      );
+    });
+
+    await this.commitChunkedOperations(operations);
+  }
+
+  private async replaceSchoolActivityLogs(
+    schoolId: string,
+    rows: any[] = [],
+  ): Promise<void> {
+    await this.replaceCollectionAtPath(
+      ["schools", schoolId, "activityLogs"],
+      rows.filter(Boolean).map((row, index) => ({
+        ...row,
+        id:
+          row?.id ||
+          `${row?.actionType || row?.eventType || "activity"}_${row?.entityId || "entry"}_${index}`,
+        schoolId,
+      })),
+      (row: any) => row.id,
+    );
+  }
+
+  private async restoreSchoolProfileSnapshot(
+    schoolId: string,
+    schoolProfile?: Partial<School> | null,
+    schoolSettings?: SchoolConfig | null,
+  ): Promise<void> {
+    const profileUpdate = this.stripUndefinedDeep({
+      name: schoolProfile?.name || schoolSettings?.schoolName,
+      code: schoolProfile?.code,
+      logoUrl: schoolProfile?.logoUrl || schoolSettings?.logoUrl,
+      phone: schoolProfile?.phone || schoolSettings?.phone,
+      address: schoolProfile?.address || schoolSettings?.address,
+      studentsCount: schoolProfile?.studentsCount,
+      notes: schoolProfile?.notes,
+    });
+
+    if (!Object.keys(profileUpdate).length) {
+      return;
+    }
+
+    await setDoc(doc(firestore, "schools", schoolId), profileUpdate, {
+      merge: true,
+    });
+  }
+
+  private generateBackupId(prefix = "backup"): string {
+    return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  private isFullBackupType(backupType?: BackupType | null): boolean {
+    return (
+      !backupType ||
+      backupType === "manual" ||
+      backupType === "term-reset" ||
+      backupType === "safety-restore"
+    );
+  }
+
+  private async getRecordsByIds<T>(
+    collectionName: string,
+    ids: string[] = [],
+  ): Promise<T[]> {
+    if (!ids.length) return [];
+    const records = await Promise.all(
+      ids.map(async (id) => {
+        const snap = await getDoc(doc(firestore, collectionName, id));
+        return snap.exists() ? (snap.data() as T) : null;
+      }),
+    );
+    return records.filter(Boolean) as T[];
+  }
+
+  private async upsertSchoolScopedCollection<
+    T extends { schoolId?: string | null },
+  >(
+    collectionName: string,
+    schoolId: string,
+    rows: T[] = [],
+    resolveId: (row: T) => string,
+  ): Promise<void> {
+    const operations = rows.filter(Boolean).map(
+      (row) => (batch: ReturnType<typeof writeBatch>) =>
+        batch.set(doc(firestore, collectionName, resolveId(row)), {
+          ...(row as Omit<T, "schoolId">),
+          schoolId,
+        } as T),
+    );
+    await this.commitChunkedOperations(operations);
+  }
+
+  private async upsertCollectionAtPath<T>(
+    collectionPath: string[],
+    rows: T[] = [],
+    resolveId: (row: T) => string,
+  ): Promise<void> {
+    const collectionRef = collection(firestore, collectionPath.join("/"));
+    const operations = rows
+      .filter(Boolean)
+      .map(
+        (row) => (batch: ReturnType<typeof writeBatch>) =>
+          batch.set(doc(collectionRef, resolveId(row)), row as any),
+      );
+    await this.commitChunkedOperations(operations);
+  }
+
+  private async getSchoolRecoveryContext(schoolId: string): Promise<{
+    schoolName: string;
+    term: string;
+    academicYear: string;
+  }> {
+    try {
+      const config = await this.getSchoolConfig(schoolId);
+      return {
+        schoolName: config.schoolName || "",
+        term: config.currentTerm || "Recovery Snapshot",
+        academicYear: config.academicYear || "Unknown",
+      };
+    } catch {
+      return {
+        schoolName: "",
+        term: "Recovery Snapshot",
+        academicYear: "Unknown",
+      };
+    }
+  }
+
+  private async createSnapshotRecord(params: {
+    schoolId: string;
+    backupType: BackupType;
+    title?: string;
+    description?: string;
+    sourceAction?: string;
+    sourceModule?: string;
+    entityType?: string;
+    entityId?: string;
+    entityLabel?: string;
+    recordCount?: number;
+    collections?: RecoveryCollectionScope[];
+    data?: Backup["data"];
+    dedupeKey?: string;
+    expiresAt?: number | null;
+    term?: string;
+    academicYear?: string;
+    schoolName?: string;
+  }): Promise<Backup> {
+    const context =
+      params.term && params.academicYear && params.schoolName !== undefined
+        ? {
+            term: params.term,
+            academicYear: params.academicYear,
+            schoolName: params.schoolName,
+          }
+        : await this.getSchoolRecoveryContext(params.schoolId);
+
+    const backup = this.stripUndefinedDeep<Backup>({
+      id: this.generateBackupId("backup"),
+      schoolId: params.schoolId,
+      schoolName: params.schoolName ?? context.schoolName,
+      timestamp: Date.now(),
+      term: params.term ?? context.term,
+      academicYear: params.academicYear ?? context.academicYear,
+      backupType: params.backupType,
+      dedupeKey: params.dedupeKey,
+      recoveryMeta: this.isFullBackupType(params.backupType)
+        ? undefined
+        : {
+            title: params.title || "Recovery snapshot",
+            description: params.description,
+            sourceAction: params.sourceAction,
+            sourceModule: params.sourceModule,
+            entityType: params.entityType,
+            entityId: params.entityId,
+            entityLabel: params.entityLabel,
+            recordCount: params.recordCount,
+            collections: params.collections,
+            expiresAt: params.expiresAt ?? null,
+          },
+      data: params.data,
+    });
+
+    await setDoc(doc(firestore, "backups", backup.id), backup);
+    return backup;
+  }
+
+  private async createRecoveryPoint(params: {
+    schoolId: string;
+    title: string;
+    description?: string;
+    sourceAction?: string;
+    sourceModule?: string;
+    entityType?: string;
+    entityId?: string;
+    entityLabel?: string;
+    recordCount?: number;
+    collections: RecoveryCollectionScope[];
+    data: Backup["data"];
+    term?: string;
+    academicYear?: string;
+    schoolName?: string;
+  }): Promise<Backup> {
+    return this.createSnapshotRecord({
+      ...params,
+      backupType: "recovery-point",
+      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+    });
+  }
+
+  private async createRecycleBinEntry(params: {
+    schoolId: string;
+    title: string;
+    description?: string;
+    sourceAction?: string;
+    sourceModule?: string;
+    entityType?: string;
+    entityId?: string;
+    entityLabel?: string;
+    recordCount?: number;
+    collections: RecoveryCollectionScope[];
+    data: Backup["data"];
+    term?: string;
+    academicYear?: string;
+    schoolName?: string;
+  }): Promise<Backup> {
+    return this.createSnapshotRecord({
+      ...params,
+      backupType: "recycle-bin",
+      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+    });
+  }
+
+  private async buildCurrentSnapshotForScopes(
+    schoolId: string,
+    scopes: RecoveryCollectionScope[] = [],
+  ): Promise<NonNullable<Backup["data"]>> {
+    const snapshot: NonNullable<Backup["data"]> = {};
+
+    for (const scope of scopes) {
+      switch (scope.collection) {
+        case "settings":
+          snapshot.schoolSettings = await this.getSchoolConfig(schoolId);
+          break;
+        case "students":
+          snapshot.students = await this.getRecordsByIds<Student>(
+            "students",
+            scope.recordIds,
+          );
+          break;
+        case "teacher_attendance":
+          snapshot.teacherAttendanceRecords =
+            await this.getRecordsByIds<TeacherAttendanceRecord>(
+              "teacher_attendance",
+              scope.recordIds,
+            );
+          break;
+        case "users":
+          snapshot.users = await this.getRecordsByIds<User>(
+            "users",
+            scope.recordIds,
+          );
+          break;
+        case "class_subjects":
+          snapshot.classSubjects =
+            await this.getRecordsByIds<ClassSubjectConfig>(
+              "class_subjects",
+              scope.recordIds,
+            );
+          break;
+        case "notices":
+          snapshot.notices = await this.getRecordsByIds<Notice>(
+            "notices",
+            scope.recordIds,
+          );
+          break;
+        case "admin_notifications":
+          snapshot.adminNotifications =
+            await this.getRecordsByIds<SystemNotification>(
+              "admin_notifications",
+              scope.recordIds,
+            );
+          break;
+        default:
+          break;
+      }
+    }
+
+    return snapshot;
+  }
+
+  private async restoreSnapshotScopes(
+    schoolId: string,
+    snapshot: Backup,
+  ): Promise<void> {
+    const scopes = snapshot.recoveryMeta?.collections || [];
+    const data = snapshot.data || {};
+
+    for (const scope of scopes) {
+      switch (scope.collection) {
+        case "settings": {
+          const settings = data.schoolSettings || data.schoolConfig;
+          if (settings) {
+            await setDoc(
+              doc(firestore, "settings", schoolId),
+              { ...settings, schoolId },
+              { merge: false },
+            );
+          }
+          break;
+        }
+        case "students":
+          await this.upsertSchoolScopedCollection(
+            "students",
+            schoolId,
+            data.students || [],
+            (row) => row.id,
+          );
+          break;
+        case "teacher_attendance":
+          await this.upsertSchoolScopedCollection(
+            "teacher_attendance",
+            schoolId,
+            data.teacherAttendanceRecords || [],
+            (row) => row.id,
+          );
+          break;
+        case "users":
+          await this.upsertSchoolScopedCollection(
+            "users",
+            schoolId,
+            data.users || [],
+            (row) => row.id,
+          );
+          break;
+        case "class_subjects":
+          await this.upsertSchoolScopedCollection(
+            "class_subjects",
+            schoolId,
+            data.classSubjects || [],
+            (row) => `${schoolId}_${row.classId}`,
+          );
+          break;
+        case "notices":
+          await this.upsertSchoolScopedCollection(
+            "notices",
+            schoolId,
+            data.notices || [],
+            (row) => row.id,
+          );
+          break;
+        case "admin_notifications":
+          await this.upsertSchoolScopedCollection(
+            "admin_notifications",
+            schoolId,
+            data.adminNotifications || [],
+            (row) => row.id,
+          );
+          break;
+        case "fees": {
+          const rows = data.fees || [];
+          const useV2 = await this.useFinanceV2(schoolId);
+          const feePath = useV2 ? ["schools", schoolId, "fees"] : ["fees"];
+          await this.upsertCollectionAtPath(
+            feePath,
+            rows.map((row) => ({ ...row, schoolId })),
+            (row) => row.id,
+          );
+          break;
+        }
+        case "student_ledgers": {
+          const rows = data.studentLedgers || [];
+          const useV2 = await this.useFinanceV2(schoolId);
+          const ledgerPath = useV2
+            ? ["schools", schoolId, "feeLedgers"]
+            : ["student_ledgers"];
+          await this.upsertCollectionAtPath(
+            ledgerPath,
+            rows.map((row) => ({ ...row, schoolId })),
+            (row) => row.id,
+          );
+          break;
+        }
+        case "payments": {
+          const rows = data.payments || [];
+          const useV2 = await this.useFinanceV2(schoolId);
+          const paymentPath = useV2
+            ? ["schools", schoolId, "payments"]
+            : ["payments"];
+          await this.upsertCollectionAtPath(
+            paymentPath,
+            rows.map((row) => ({ ...row, schoolId })),
+            (row) => row.id,
+          );
+          break;
+        }
+        case "finance_settings":
+          if (data.financeSettings) {
+            await setDoc(
+              doc(firestore, "schools", schoolId, "financeSettings", "main"),
+              { ...data.financeSettings, schoolId },
+              { merge: true },
+            );
+          }
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  async getFinanceSettings(schoolId?: string): Promise<FinanceSettings> {
+    await this.requireFeature(schoolId, "fees_payments");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getFinanceSettings");
+    const docRef = doc(
+      firestore,
+      "schools",
+      scopedSchoolId,
+      "financeSettings",
+      "main",
+    );
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return snap.data() as FinanceSettings;
+    }
+    return { schoolId: scopedSchoolId, financeVersion: "v1" };
+  }
+
+  private async useFinanceV2(schoolId?: string): Promise<boolean> {
+    const settings = await this.getFinanceSettings(schoolId);
+    return settings.financeVersion === "v2";
+  }
+
+  // --- Config ---
+  async getSchoolConfig(schoolId?: string): Promise<SchoolConfig> {
+    const actorRole = await this.getCurrentActorRole();
+    // Parents only need the config for term/year context, skip strict admin checks
+    if (actorRole !== UserRole.PARENT) {
+      await this.requireFeatures(schoolId, ["academic_year", "admin_dashboard"]);
+    }
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getSchoolConfig");
+    const docRef = doc(firestore, "settings", scopedSchoolId);
+    const snap = await getDoc(docRef);
+
+    if (snap.exists()) {
+      const data = snap.data() as SchoolConfig;
+      const config = { ...data, schoolId: scopedSchoolId };
+      return config;
+    }
+
+    // Default config FOR THIS SCHOOL ONLY
+    return {
+      schoolId: scopedSchoolId,
+      schoolName: "New School",
+      academicYear: ACADEMIC_YEAR,
+      currentTerm: `Term ${CURRENT_TERM}`,
+      headTeacherRemark: "Keep it up.",
+      termEndDate: "",
+      schoolReopenDate: "",
+      vacationDate: "",
+      nextTermBegins: "",
+      termTransitionProcessed: false,
+      holidayDates: [],
+      gradingScale: {
+        A: 80,
+        B: 70,
+        C: 60,
+        D: 45,
+      },
+      positionRule: "total",
+    };
+  }
+
+  async updateSchoolConfig(config: SchoolConfig): Promise<void> {
+    const { schoolId, ...data } = config;
+    await this.requireFeature(schoolId, "academic_year");
+    // Update private settings
+    await setDoc(doc(firestore, "settings", schoolId), config);
+    
+    // Also sync branding to the public school profile used by dashboards and Super Admin.
+    // This client-side mirror can be blocked by rules for school admins; logo uploads
+    // also call the backend branding endpoint with Admin SDK privileges.
+    if (data.logoUrl || data.schoolName || data.notificationSettings) {
+      setDoc(doc(firestore, "schools", schoolId), {
+        ...(data.logoUrl ? { logoUrl: data.logoUrl } : {}),
+        ...(data.schoolName ? { name: data.schoolName } : {}),
+        ...(data.notificationSettings ? { notificationSettings: data.notificationSettings } : {}),
+        updatedAt: Date.now()
+      }, { merge: true }).catch((err) => {
+        console.warn("Failed to sync profile to schools collection from client", err);
+      });
+    }
+  }
+
+  async saveFinanceSettings(settings: FinanceSettings): Promise<void> {
+    await this.requireFeature(settings.schoolId, "fees_payments");
+    const scopedSchoolId = this.requireSchoolId(
+      settings.schoolId,
+      "saveFinanceSettings",
+    );
+    await setDoc(
+      doc(firestore, "schools", scopedSchoolId, "financeSettings", "main"),
+      settings,
+      { merge: true },
+    );
+  }
+
+  // --- Users ---
+  async getUsers(schoolId?: string): Promise<User[]> {
+    await this.requireFeature(schoolId, "teacher_management");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getUsers");
+    const q = query(
+      collection(firestore, "users"),
+      where("schoolId", "==", scopedSchoolId),
+    );
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(
+      (docSnap) => ({ id: docSnap.id, ...docSnap.data() }) as User,
+    );
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    const querySnapshot = await getDocs(collection(firestore, "users"));
+    return querySnapshot.docs.map(
+      (docSnap) => ({ id: docSnap.id, ...docSnap.data() }) as User,
+    );
+  }
+
+  async updateUserStatus(payload: {
+    userId: string;
+    isActive: boolean;
+    disabledAt?: number | null;
+    disabledBy?: string | null;
+    disabledReason?: string | null;
+  }): Promise<void> {
+    const { userId, isActive, disabledAt, disabledBy, disabledReason } =
+      payload;
+    await updateDoc(doc(firestore, "users", userId), {
+      isActive,
+      status: isActive ? "active" : "inactive",
+      disabledAt: isActive ? null : disabledAt || Date.now(),
+      disabledBy: isActive ? null : disabledBy || null,
+      disabledReason: isActive ? null : disabledReason || null,
+    });
+  }
+
+  async updateUserRole(payload: {
+    userId: string;
+    role: UserRole;
+    schoolId?: string | null;
+    roleUpdatedAt?: number | null;
+    roleUpdatedBy?: string | null;
+  }): Promise<void> {
+    const { userId, role, schoolId, roleUpdatedAt, roleUpdatedBy } = payload;
+    await updateDoc(doc(firestore, "users", userId), {
+      role,
+      ...(schoolId !== undefined ? { schoolId } : {}),
+      roleUpdatedAt: roleUpdatedAt || Date.now(),
+      roleUpdatedBy: roleUpdatedBy || null,
+    });
+  }
+
+  async forceLogoutUser(payload: {
+    userId: string;
+    tokenVersion?: number;
+    forcedLogoutAt?: number | null;
+    forcedLogoutBy?: string | null;
+  }): Promise<void> {
+    const { userId, tokenVersion, forcedLogoutAt, forcedLogoutBy } = payload;
+    await updateDoc(doc(firestore, "users", userId), {
+      tokenVersion: (tokenVersion ?? 0) + 1,
+      forcedLogoutAt: forcedLogoutAt || Date.now(),
+      forcedLogoutBy: forcedLogoutBy || null,
+    });
+  }
+
+  async addUser(user: User): Promise<void> {
+    await this.requireFeature(user.schoolId || undefined, "teacher_management");
+    await setDoc(doc(firestore, "users", user.id), user);
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    const existing = await getDoc(doc(firestore, "users", id));
+    if (existing.exists()) {
+      const data = existing.data() as User;
+      await this.requireFeature(
+        data.schoolId || undefined,
+        "teacher_management",
+      );
+      if (data.schoolId) {
+        let relatedAttendance: TeacherAttendanceRecord[] = [];
+        try {
+          const teacherAttendanceRecords =
+            await this.getAllTeacherAttendanceRecords(data.schoolId);
+          relatedAttendance = teacherAttendanceRecords.filter(
+            (record) => record.teacherId === id,
+          );
+        } catch (attendanceError) {
+          console.warn(
+            "Skipping teacher attendance snapshot for recycle bin entry",
+            attendanceError,
+          );
+        }
+        await this.createRecycleBinEntry({
+          schoolId: data.schoolId,
+          title: `Deleted teacher: ${data.fullName || data.email || id}`,
+          description:
+            "Restores the deleted teacher profile and linked attendance records.",
+          sourceAction: "teacher_deleted",
+          sourceModule: "Teachers",
+          entityType: "teacher",
+          entityId: id,
+          entityLabel: data.fullName || data.email || id,
+          recordCount: 1 + relatedAttendance.length,
+          collections: [
+            {
+              collection: "users",
+              restoreMode: "merge",
+              recordIds: [id],
+              label: "Teacher profile",
+            },
+            {
+              collection: "teacher_attendance",
+              restoreMode: "merge",
+              recordIds: relatedAttendance.map((record) => record.id),
+              label: "Teacher attendance",
+            },
+          ],
+          data: {
+            users: [data],
+            teacherAttendanceRecords: relatedAttendance,
+          },
+        });
+      }
+    }
+    await deleteDoc(doc(firestore, "users", id));
+  }
+
+  async updateUserAssignedClasses(
+    id: string,
+    assignedClassIds: string[],
+  ): Promise<void> {
+    const existing = await getDoc(doc(firestore, "users", id));
+    if (existing.exists()) {
+      const data = existing.data() as User;
+      await this.requireFeature(
+        data.schoolId || undefined,
+        "teacher_management",
+      );
+    }
+    await updateDoc(doc(firestore, "users", id), {
+      assignedClassIds,
+    });
+  }
+
+  // --- Students ---
+  async getStudentsPage(params: {
+    schoolId?: string;
+    classId?: string;
+    pageSize?: number;
+    cursorId?: string | null;
+  }): Promise<SchoolScopedPage<Student>> {
+    await this.requireFeature(params.schoolId, "student_management");
+    const scopedSchoolId = this.requireSchoolId(
+      params.schoolId,
+      "getStudentsPage",
+    );
+
+    const constraints: QueryConstraint[] = [];
+    if (params.classId) {
+      constraints.push(where("classId", "==", params.classId));
+    }
+
+    return this.getCollectionBySchoolIdPage<Student>(
+      "students",
+      scopedSchoolId,
+      {
+        pageSize: params.pageSize,
+        cursorId: params.cursorId,
+        constraints,
+        mapDoc: (docSnap) => {
+          const data = docSnap.data() as Student;
+          return {
+            ...data,
+            id: data.id || docSnap.id,
+          };
+        },
+      },
+    );
+  }
+
+  async getStudents(schoolId?: string, classId?: string): Promise<Student[]> {
+    await this.requireFeature(schoolId, "student_management");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getStudents");
+    const studentsRef = collection(firestore, "students");
+    const conditions: any[] = [where("schoolId", "==", scopedSchoolId)];
+    if (classId) conditions.push(where("classId", "==", classId));
+    const q = query(studentsRef, ...conditions);
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => d.data() as Student);
+  }
+
+  async getStudent(id: string): Promise<Student | null> {
+    const snap = await getDoc(doc(firestore, "students", id));
+    if (!snap.exists()) return null;
+    return { id: snap.id, ...snap.data() } as Student;
+  }
+
+  async addStudent(student: Student): Promise<void> {
+    await this.requireFeature(student.schoolId, "student_management");
+    this.requireSchoolId(student.schoolId, "addStudent");
+    await setDoc(doc(firestore, "students", student.id), {
+      ...student,
+      createdAt: student.createdAt ?? Date.now(),
+    });
+  }
+
+  async updateStudent(student: Student): Promise<void> {
+    await this.requireFeature(student.schoolId, "student_management");
+    this.requireSchoolId(student.schoolId, "updateStudent");
+    await updateDoc(doc(firestore, "students", student.id), {
+      ...student,
+      ...(student.schoolId ? { schoolId: student.schoolId } : {}),
+    });
+  }
+
+  async updateStudentsClassBulk(
+    schoolId: string | undefined,
+    updates: { id: string; classId: string }[],
+  ): Promise<void> {
+    await this.requireFeature(schoolId, "student_management");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "updateStudentsClassBulk",
+    );
+    if (!updates.length) return;
+    const studentIds = updates.map((update) => update.id);
+    const currentStudents = await this.getRecordsByIds<Student>(
+      "students",
+      studentIds,
+    );
+
+    if (currentStudents.length > 0) {
+      await this.createRecoveryPoint({
+        schoolId: scopedSchoolId,
+        title: `Before bulk class update (${currentStudents.length} students)`,
+        description:
+          "Restores student class assignments before a bulk class change.",
+        sourceAction: "students_class_bulk_update",
+        sourceModule: "Students",
+        entityType: "students",
+        recordCount: currentStudents.length,
+        collections: [
+          {
+            collection: "students",
+            restoreMode: "merge",
+            recordIds: currentStudents.map((student) => student.id),
+            label: "Students",
+          },
+        ],
+        data: {
+          students: currentStudents,
+        },
+      });
+    }
+
+    const batch = writeBatch(firestore);
+    updates.forEach((update) => {
+      const studentRef = doc(firestore, "students", update.id);
+      batch.update(studentRef, {
+        classId: update.classId,
+        schoolId: scopedSchoolId,
+      });
+    });
+    await batch.commit();
+  }
+
+  async deleteStudent(id: string): Promise<void> {
+    const existing = await getDoc(doc(firestore, "students", id));
+    if (existing.exists()) {
+      const data = existing.data() as Student;
+      await this.requireFeature(
+        data.schoolId || undefined,
+        "student_management",
+      );
+      if (data.schoolId) {
+        await this.createRecycleBinEntry({
+          schoolId: data.schoolId,
+          title: `Deleted student: ${data.name}`,
+          description: "Restores a deleted student record.",
+          sourceAction: "student_deleted",
+          sourceModule: "Students",
+          entityType: "student",
+          entityId: id,
+          entityLabel: data.name,
+          recordCount: 1,
+          collections: [
+            {
+              collection: "students",
+              restoreMode: "merge",
+              recordIds: [id],
+              label: "Student",
+            },
+          ],
+          data: {
+            students: [data],
+          },
+        });
+      }
+    }
+    await deleteDoc(doc(firestore, "students", id));
+  }
+
+  // --- Subjects ---
+  async getSubjects(schoolId?: string, classId?: string): Promise<string[]> {
+    await this.requireFeature(schoolId, "class_subject_management");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getSubjects");
+    if (!classId) return [];
+    const getDefaultSubjects = () => {
+      const selectedClass = CLASSES_LIST.find((cls) => cls.id === classId);
+      switch (selectedClass?.level) {
+        case "CRECHE":
+          return crecheSubjects;
+        case "NURSERY":
+          return nurserySubjects;
+        case "KG":
+          return kgSubjects;
+        case "PRIMARY":
+          return primarySubjects;
+        case "JHS":
+          return jhsSubjects;
+        default:
+          return [];
+      }
+    };
+    const q = query(
+      collection(firestore, "class_subjects"),
+      where("schoolId", "==", scopedSchoolId),
+      where("classId", "==", classId),
+    );
+    try {
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        return (snap.docs[0].data() as ClassSubjectConfig).subjects;
+      }
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getSubjects unavailable: permission denied");
+        return getDefaultSubjects();
+      }
+      throw error;
+    }
+    return getDefaultSubjects();
+  }
+
+  async addSubject(
+    classId: string,
+    name: string,
+    schoolId: string,
+  ): Promise<void> {
+    await this.requireFeature(schoolId, "class_subject_management");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "addSubject");
+    const current = await this.getSubjects(scopedSchoolId, classId);
+    if (!current.includes(name)) {
+      await setDoc(
+        doc(firestore, "class_subjects", `${scopedSchoolId}_${classId}`),
+        {
+          schoolId: scopedSchoolId,
+          classId,
+          subjects: [...current, name],
+        },
+      );
+    }
+  }
+
+  async updateSubject(
+    classId: string,
+    oldName: string,
+    newName: string,
+    schoolId: string,
+  ): Promise<void> {
+    await this.requireFeature(schoolId, "class_subject_management");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "updateSubject");
+    const current = await this.getSubjects(scopedSchoolId, classId);
+    const idx = current.indexOf(oldName);
+    if (idx !== -1) {
+      const trimmedNewName = newName.trim();
+      if (!trimmedNewName) return;
+      current[idx] = trimmedNewName;
+      await setDoc(
+        doc(firestore, "class_subjects", `${scopedSchoolId}_${classId}`),
+        {
+          schoolId: scopedSchoolId,
+          classId,
+          subjects: current,
+        },
+      );
+
+      const assessmentsSnap = await getDocs(
+        query(
+          collection(firestore, "assessments"),
+          where("schoolId", "==", scopedSchoolId),
+          where("classId", "==", classId),
+          where("subject", "==", oldName),
+        ),
+      );
+
+      for (let index = 0; index < assessmentsSnap.docs.length; index += 400) {
+        const batch = writeBatch(firestore);
+        assessmentsSnap.docs.slice(index, index + 400).forEach((docSnap) => {
+          batch.update(docSnap.ref, { subject: trimmedNewName });
+        });
+        await batch.commit();
+      }
+    }
+  }
+  async deleteSubject(
+    classId: string,
+    name: string,
+    schoolId: string,
+  ): Promise<void> {
+    await this.requireFeature(schoolId, "class_subject_management");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "deleteSubject");
+    const current = await this.getSubjects(scopedSchoolId, classId);
+    if (current.includes(name)) {
+      await this.createRecoveryPoint({
+        schoolId: scopedSchoolId,
+        title: `Before removing subject: ${name}`,
+        description:
+          "Restores the subject list for this class before a subject was removed.",
+        sourceAction: "subject_deleted",
+        sourceModule: "System Settings",
+        entityType: "subject",
+        entityId: `${classId}:${name}`,
+        entityLabel: name,
+        recordCount: 1,
+        collections: [
+          {
+            collection: "class_subjects",
+            restoreMode: "merge",
+            recordIds: [`${scopedSchoolId}_${classId}`],
+            label: "Class subjects",
+          },
+        ],
+        data: {
+          classSubjects: [
+            {
+              schoolId: scopedSchoolId,
+              classId,
+              subjects: current,
+            },
+          ],
+        },
+      });
+    }
+    const updated = current.filter((s) => s !== name);
+    await setDoc(
+      doc(firestore, "class_subjects", `${scopedSchoolId}_${classId}`),
+      {
+        schoolId: scopedSchoolId,
+        classId,
+        subjects: updated,
+      },
+    );
+  }
+
+  async seedClassSubjects(
+    classId: string,
+    subjects: string[],
+    schoolId: string,
+  ): Promise<void> {
+    await this.requireFeature(schoolId, "class_subject_management");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "seedClassSubjects");
+    await setDoc(
+      doc(firestore, "class_subjects", `${scopedSchoolId}_${classId}`),
+      {
+        schoolId: scopedSchoolId,
+        classId,
+        subjects,
+      },
+    );
+  }
+
+  async resetAllClassSubjects(schoolId?: string): Promise<void> {
+    await this.requireFeature(schoolId, "class_subject_management");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "resetAllClassSubjects",
+    );
+    const q = query(
+      collection(firestore, "class_subjects"),
+      where("schoolId", "==", scopedSchoolId),
+    );
+    const snap = await getDocs(q);
+    const deletions = snap.docs.map((d) =>
+      deleteDoc(doc(firestore, "class_subjects", d.id)),
+    );
+    await Promise.all(deletions);
+  }
+
+  async generateDemoAcademicData(
+    schoolId: string,
+    students: Student[],
+    onProgress?: (percent: number, message: string) => void,
+  ): Promise<{ attendanceCreated: number; assessmentsCreated: number }> {
+    const scopedSchoolId = this.requireSchoolId(schoolId, "generateDemoAcademicData");
+    const schoolSnap = await getDoc(doc(firestore, "schools", scopedSchoolId));
+    const schoolData = schoolSnap.data() as Partial<School> | undefined;
+    const isDemoSchool =
+      schoolData?.isDemo === true || /\bdemo\b/i.test(schoolData?.name || "");
+    if (!isDemoSchool) {
+      throw new Error("Demo results can only be generated for a designated demo school.");
+    }
+    await this.requireFeature(scopedSchoolId, "attendance");
+    await this.requireFeature(scopedSchoolId, "basic_exam_reports");
+    const config = await this.getSchoolConfig(scopedSchoolId);
+    const termMatch = String(config.currentTerm || "").match(/[1-3]/);
+    const term = Number(termMatch?.[0] || CURRENT_TERM) as 1 | 2 | 3;
+    const academicYear = config.academicYear || ACADEMIC_YEAR;
+    const activeStudents = students.filter((student) => student.studentStatus !== "stopped");
+    const studentsByClass = activeStudents.reduce<Record<string, Student[]>>((groups, student) => {
+      (groups[student.classId] ||= []).push(student);
+      return groups;
+    }, {});
+
+    const hash = (value: string) => {
+      let result = 2166136261;
+      for (let index = 0; index < value.length; index += 1) {
+        result = Math.imul(result ^ value.charCodeAt(index), 16777619);
+      }
+      return Math.abs(result);
+    };
+    const schoolDays: string[] = [];
+    const cursor = new Date();
+    cursor.setDate(cursor.getDate() - 1);
+    while (schoolDays.length < 30) {
+      const day = cursor.getDay();
+      if (day !== 0 && day !== 6) schoolDays.unshift(cursor.toISOString().slice(0, 10));
+      cursor.setDate(cursor.getDate() - 1);
+    }
+
+    onProgress?.(2, "Checking existing demo records...");
+    const [attendanceSnap, assessmentSnap] = await Promise.all([
+      getDocs(query(collection(firestore, "attendance"), where("schoolId", "==", scopedSchoolId))),
+      getDocs(query(collection(firestore, "assessments"), where("schoolId", "==", scopedSchoolId))),
+    ]);
+    const existingAttendanceIds = new Set(attendanceSnap.docs.map((item) => item.id));
+    const existingAssessmentIds = new Set(assessmentSnap.docs.map((item) => item.id));
+    const writes: Array<{ ref: ReturnType<typeof doc>; data: AttendanceRecord | Assessment }> = [];
+    let attendanceCreated = 0;
+    let assessmentsCreated = 0;
+
+    Object.entries(studentsByClass).forEach(([classId, classStudents]) => {
+      schoolDays.forEach((date) => {
+        const id = `${scopedSchoolId}_${classId}_${date}`;
+        if (existingAttendanceIds.has(id)) return;
+        const presentStudentIds = classStudents
+          .filter((student) => hash(`${student.id}_${date}`) % 100 >= 8)
+          .map((student) => student.id);
+        writes.push({
+          ref: doc(firestore, "attendance", id),
+          data: { id, schoolId: scopedSchoolId, classId, date, presentStudentIds },
+        });
+        attendanceCreated += 1;
+      });
+    });
+
+    onProgress?.(12, "Preparing realistic assessment scores...");
+    for (const [classId, classStudents] of Object.entries(studentsByClass)) {
+      const subjects = await this.getSubjects(scopedSchoolId, classId);
+      for (const student of classStudents) {
+        for (const subject of subjects) {
+          const id = `${scopedSchoolId}_${student.id}_${subject}_${term}_${academicYear}`;
+          if (existingAssessmentIds.has(id)) continue;
+          const base = hash(`${student.id}_${subject}`);
+          const testScore = 8 + (base % 8);
+          const homeworkScore = 8 + (Math.floor(base / 7) % 8);
+          const projectScore = 11 + (Math.floor(base / 13) % 10);
+          const examScore = 45 + (Math.floor(base / 19) % 51);
+          writes.push({
+            ref: doc(firestore, "assessments", id),
+            data: {
+              id,
+              schoolId: scopedSchoolId,
+              studentId: student.id,
+              classId,
+              term,
+              academicYear,
+              subject,
+              testScore,
+              homeworkScore,
+              projectScore,
+              examScore,
+              total: Math.round(testScore + homeworkScore + projectScore + examScore * 0.5),
+            },
+          });
+          assessmentsCreated += 1;
+        }
+      }
+    }
+
+    if (!writes.length) {
+      onProgress?.(100, "Demo records already exist.");
+      return { attendanceCreated, assessmentsCreated };
+    }
+    for (let start = 0; start < writes.length; start += 400) {
+      const batch = writeBatch(firestore);
+      const chunk = writes.slice(start, start + 400);
+      chunk.forEach((write) => batch.set(write.ref, write.data));
+      await batch.commit();
+      onProgress?.(
+        Math.min(100, Math.round(((start + chunk.length) / writes.length) * 88) + 12),
+        `Saving demo records (${Math.min(start + chunk.length, writes.length)} of ${writes.length})...`,
+      );
+    }
+    return { attendanceCreated, assessmentsCreated };
+  }
+
+  // --- Attendance ---
+  async getAttendance(
+    schoolId?: string,
+    classId?: string,
+    date?: string,
+  ): Promise<AttendanceRecord | undefined> {
+    await this.requireFeature(schoolId, "attendance");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getAttendance");
+    if (!classId || !date) return undefined;
+    const q = query(
+      collection(firestore, "attendance"),
+      where("schoolId", "==", scopedSchoolId),
+      where("classId", "==", classId),
+      where("date", "==", date),
+    );
+    const snap = await getDocs(q);
+    return snap.empty ? undefined : (snap.docs[0].data() as AttendanceRecord);
+  }
+
+  async getClassAttendance(
+    schoolId?: string,
+    classId?: string,
+  ): Promise<AttendanceRecord[]> {
+    await this.requireFeature(schoolId, "attendance");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getClassAttendance");
+    if (!classId) return [];
+
+    try {
+      const q = query(
+        collection(firestore, "attendance"),
+        where("schoolId", "==", scopedSchoolId),
+        where("classId", "==", classId),
+      );
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as AttendanceRecord);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getClassAttendance unavailable: permission denied");
+        return [];
+      }
+      console.warn("[mockDb] getClassAttendance failed, trying school-wide fallback", error);
+      // Fallback: Fetch all attendance for the school and filter by classId locally
+      // This is less efficient but works without composite indexes
+      try {
+        const q = query(
+          collection(firestore, "attendance"),
+          where("schoolId", "==", scopedSchoolId),
+        );
+        const snap = await getDocs(q);
+        return snap.docs
+          .map((d) => d.data() as AttendanceRecord)
+          .filter((r) => r.classId === classId);
+      } catch (innerError) {
+        if (this.isPermissionDeniedError(innerError)) {
+          console.debug("[mockDb] getClassAttendance fallback unavailable: permission denied");
+          return [];
+        }
+        console.warn("[mockDb] getClassAttendance fallback failed, returning empty", innerError);
+        return [];
+      }
+    }
+  }
+
+  async getClassAttendanceByDateRange(
+    schoolId?: string,
+    classId?: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<AttendanceRecord[]> {
+    await this.requireFeature(schoolId, "attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getClassAttendanceByDateRange",
+    );
+    if (!classId || !startDate || !endDate) return [];
+
+    try {
+      const rangedQuery = query(
+        collection(firestore, "attendance"),
+        where("schoolId", "==", scopedSchoolId),
+        where("classId", "==", classId),
+        where("date", ">=", startDate),
+        where("date", "<=", endDate),
+      );
+      const rangedSnap = await getDocs(rangedQuery);
+      // An empty range is expected at the start of a new term. Do not probe
+      // deterministic document IDs here: reads of nonexistent attendance
+      // documents cannot satisfy rules that check resource.data.schoolId.
+      return rangedSnap.docs.map((d) => d.data() as AttendanceRecord);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getClassAttendanceByDateRange unavailable: permission denied");
+        return [];
+      }
+      // Fallback for environments missing composite indexes.
+      try {
+        const fallback = await this.getClassAttendance(scopedSchoolId, classId);
+        return fallback.filter(
+          (record) => record.date >= startDate && record.date <= endDate,
+        );
+      } catch (fallbackError) {
+        console.warn(
+          "[mockDb] getClassAttendanceByDateRange class fallback failed",
+          fallbackError,
+        );
+        throw fallbackError;
+      }
+    }
+  }
+
+  async getAttendanceByDate(
+    schoolId?: string,
+    date?: string,
+  ): Promise<AttendanceRecord[]> {
+    await this.requireFeature(schoolId, "attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getAttendanceByDate",
+    );
+    if (!date) return [];
+    const q = query(
+      collection(firestore, "attendance"),
+      where("schoolId", "==", scopedSchoolId),
+      where("date", "==", date),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => d.data() as AttendanceRecord);
+  }
+
+  async getAttendanceByDateRange(
+    schoolId?: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<AttendanceRecord[]> {
+    await this.requireFeature(schoolId, "attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getAttendanceByDateRange",
+    );
+    if (!startDate || !endDate) return [];
+
+    try {
+      const rangedQuery = query(
+        collection(firestore, "attendance"),
+        where("schoolId", "==", scopedSchoolId),
+        where("date", ">=", startDate),
+        where("date", "<=", endDate),
+      );
+      const rangedSnap = await getDocs(rangedQuery);
+      return rangedSnap.docs.map(
+        (docSnap) => docSnap.data() as AttendanceRecord,
+      );
+    } catch (error) {
+      const fallbackQuery = query(
+        collection(firestore, "attendance"),
+        where("schoolId", "==", scopedSchoolId),
+      );
+      const fallbackSnap = await getDocs(fallbackQuery);
+      return fallbackSnap.docs
+        .map((docSnap) => docSnap.data() as AttendanceRecord)
+        .filter((record) => record.date >= startDate && record.date <= endDate);
+    }
+  }
+
+  async saveAttendance(record: AttendanceRecord): Promise<void> {
+    await this.requireFeature(record.schoolId, "attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      record.schoolId,
+      "saveAttendance",
+    );
+    const id = `${scopedSchoolId}_${record.classId}_${record.date}`;
+    await setDoc(doc(firestore, "attendance", id), { ...record, id });
+  }
+
+  // --- Assessments ---
+  async getAssessments(
+    schoolId?: string,
+    classId?: string,
+    subject?: string,
+  ): Promise<Assessment[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getAssessments");
+    if (!classId || !subject) return [];
+    const q = query(
+      collection(firestore, "assessments"),
+      where("schoolId", "==", scopedSchoolId),
+      where("classId", "==", classId),
+      where("subject", "==", subject),
+    );
+    try {
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as Assessment);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getAssessments unavailable: permission denied");
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async getAssessmentsByClassAndTerm(
+    schoolId?: string,
+    classId?: string,
+    term?: number,
+  ): Promise<Assessment[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getAssessmentsByClassAndTerm",
+    );
+    if (!classId || typeof term !== "number") return [];
+    const q = query(
+      collection(firestore, "assessments"),
+      where("schoolId", "==", scopedSchoolId),
+      where("classId", "==", classId),
+      where("term", "==", term),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => d.data() as Assessment);
+  }
+
+  async getAssessmentsPage(params: {
+    schoolId?: string;
+    classId?: string;
+    studentId?: string;
+    subject?: string;
+    term?: number;
+    pageSize?: number;
+    cursorId?: string | null;
+  }): Promise<SchoolScopedPage<Assessment>> {
+    await this.requireFeature(params.schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(
+      params.schoolId,
+      "getAssessmentsPage",
+    );
+
+    const constraints: QueryConstraint[] = [];
+    if (params.classId) {
+      constraints.push(where("classId", "==", params.classId));
+    }
+    if (params.studentId) {
+      constraints.push(where("studentId", "==", params.studentId));
+    }
+    if (params.subject) {
+      constraints.push(where("subject", "==", params.subject));
+    }
+    if (typeof params.term === "number") {
+      constraints.push(where("term", "==", params.term));
+    }
+
+    return this.getCollectionBySchoolIdPage<Assessment>(
+      "assessments",
+      scopedSchoolId,
+      {
+        pageSize: params.pageSize,
+        cursorId: params.cursorId,
+        constraints,
+        mapDoc: (docSnap) => {
+          const data = docSnap.data() as Assessment;
+          return {
+            ...data,
+            id: data.id || docSnap.id,
+          };
+        },
+      },
+    );
+  }
+
+  async getAllAssessments(schoolId?: string): Promise<Assessment[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
+    return this.getCollectionBySchoolId<Assessment>("assessments", schoolId);
+  }
+
+
+  async getStudentAssessmentsByStudent(
+
+    schoolId?: string,
+    studentId?: string,
+  ): Promise<Assessment[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getStudentAssessmentsByStudent",
+    );
+    if (!studentId) return [];
+    const q = query(
+      collection(firestore, "assessments"),
+      where("schoolId", "==", scopedSchoolId),
+      where("studentId", "==", studentId),
+    );
+    try {
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as Assessment);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getStudentAssessmentsByStudent unavailable: permission denied");
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async saveAssessment(assessment: Assessment): Promise<void> {
+    await this.requireFeature(assessment.schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(
+      assessment.schoolId,
+      "saveAssessment",
+    );
+    const id =
+      assessment.id ||
+      `${scopedSchoolId}_${assessment.studentId}_${assessment.subject}_${assessment.term}_${assessment.academicYear}`;
+    await setDoc(doc(firestore, "assessments", id), { ...assessment, id });
+  }
+
+  async resetAssessmentsForClass(
+    schoolId?: string,
+    classId?: string,
+    seedDefaults = false,
+    newTerm?: number,
+  ): Promise<void> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "resetAssessmentsForClass",
+    );
+    if (!classId) return;
+    const q = query(
+      collection(firestore, "assessments"),
+      where("schoolId", "==", scopedSchoolId),
+      where("classId", "==", classId),
+    );
+    const snap = await getDocs(q);
+    const deletions = snap.docs.map((d) =>
+      deleteDoc(doc(firestore, "assessments", d.id)),
+    );
+    await Promise.all(deletions);
+
+    if (seedDefaults) {
+      const students = await this.getStudents(scopedSchoolId, classId);
+      const subjects = await this.getSubjects(scopedSchoolId, classId);
+      const ops: Promise<void>[] = [];
+
+      // Determine the new term number (default to CURRENT_TERM if not provided)
+      const termNum = newTerm || CURRENT_TERM;
+
+      for (const student of students) {
+        for (const subject of subjects) {
+          const id = `${student.id}_${subject}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+          const assessment: Assessment = {
+            id,
+            schoolId: scopedSchoolId,
+            studentId: student.id,
+            classId,
+            term: termNum as 1 | 2 | 3,
+            academicYear: ACADEMIC_YEAR,
+            subject,
+            testScore: 0,
+            homeworkScore: 0,
+            projectScore: 0,
+            examScore: 0,
+            total: 0,
+          };
+          ops.push(setDoc(doc(firestore, "assessments", id), assessment));
+        }
+      }
+      await Promise.all(ops);
+    }
+  }
+
+  // --- Notices ---
+  async getNotices(schoolId?: string): Promise<Notice[]> {
+    await this.requireFeature(schoolId, "admin_dashboard");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getNotices");
+    const q = query(
+      collection(firestore, "notices"),
+      where("schoolId", "==", scopedSchoolId),
+    );
+    try {
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as Notice);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getNotices unavailable: permission denied");
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async addNotice(notice: Notice): Promise<void> {
+    await this.requireFeature(notice.schoolId, "admin_dashboard");
+    this.requireSchoolId(notice.schoolId, "addNotice");
+    await setDoc(doc(firestore, "notices", notice.id), notice);
+  }
+
+  async deleteNotice(id: string): Promise<void> {
+    const existing = await getDoc(doc(firestore, "notices", id));
+    if (existing.exists()) {
+      const data = existing.data() as Notice;
+      await this.requireFeature(data.schoolId || undefined, "admin_dashboard");
+      if (data.schoolId) {
+        await this.createRecycleBinEntry({
+          schoolId: data.schoolId,
+          title: `Deleted notice: ${data.date}`,
+          description: "Restores a deleted school notice.",
+          sourceAction: "notice_deleted",
+          sourceModule: "System Settings",
+          entityType: "notice",
+          entityId: id,
+          entityLabel: data.message,
+          recordCount: 1,
+          collections: [
+            {
+              collection: "notices",
+              restoreMode: "merge",
+              recordIds: [id],
+              label: "Notice",
+            },
+          ],
+          data: {
+            notices: [data],
+          },
+        });
+      }
+    }
+    await deleteDoc(doc(firestore, "notices", id));
+  }
+
+  // --- Platform Broadcasts ---
+  async getPlatformBroadcasts(schoolId?: string): Promise<PlatformBroadcast[]> {
+    await this.requireFeature(schoolId, "admin_dashboard");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getPlatformBroadcasts",
+    );
+    const q = query(
+      collection(firestore, "platformBroadcasts"),
+      orderBy("createdAt", "desc"),
+    );
+    let snap;
+    try {
+      snap = await getDocs(q);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getPlatformBroadcasts unavailable: permission denied");
+        return [];
+      }
+      throw error;
+    }
+    const now = Date.now();
+    return snap.docs
+      .map((d) => ({ ...(d.data() as Omit<PlatformBroadcast, "id">), id: d.id }))
+      .filter((b) => {
+        const publishAt = b.publishAt
+          ? b.publishAt instanceof Date
+            ? b.publishAt.getTime()
+            : typeof (b.publishAt as any)?.toDate === "function"
+              ? (b.publishAt as any).toDate().getTime()
+              : new Date(b.publishAt as any).getTime()
+          : null;
+        const expiresAt = b.expiresAt
+          ? b.expiresAt instanceof Date
+            ? b.expiresAt.getTime()
+            : typeof (b.expiresAt as any)?.toDate === "function"
+              ? (b.expiresAt as any).toDate().getTime()
+              : new Date(b.expiresAt as any).getTime()
+          : null;
+        const matchesTarget =
+          b.targetType === "ALL" ||
+          (b.targetType === "SCHOOLS" &&
+            (b.targetSchoolIds || []).includes(scopedSchoolId));
+        const isPublished =
+          b.status === "PUBLISHED" || b.status === "SCHEDULED";
+        const isLive = !publishAt || publishAt <= now;
+        const isActive = !expiresAt || expiresAt > now;
+        return matchesTarget && isPublished && isLive && isActive;
+      });
+  }
+
+  // --- Student Remarks ---
+  async getStudentRemarks(
+    schoolId?: string,
+    classId?: string,
+  ): Promise<StudentRemark[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getStudentRemarks");
+    if (!classId) return [];
+    const q = query(
+      collection(firestore, "student_remarks"),
+      where("schoolId", "==", scopedSchoolId),
+      where("classId", "==", classId),
+    );
+    try {
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as StudentRemark);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getStudentRemarks unavailable: permission denied");
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async getStudentRemarksByStudent(
+    schoolId?: string,
+    studentId?: string,
+  ): Promise<StudentRemark[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getStudentRemarksByStudent",
+    );
+    if (!studentId) return [];
+    const q = query(
+      collection(firestore, "student_remarks"),
+      where("schoolId", "==", scopedSchoolId),
+      where("studentId", "==", studentId),
+    );
+    try {
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as StudentRemark);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getStudentRemarksByStudent unavailable: permission denied");
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async getAdminRemarks(
+    schoolId?: string,
+    studentId?: string,
+  ): Promise<AdminRemark[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getAdminRemarks");
+    if (!studentId) return [];
+    const q = query(
+      collection(firestore, "admin_remarks"),
+      where("schoolId", "==", scopedSchoolId),
+      where("studentId", "==", studentId),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => d.data() as AdminRemark);
+  }
+
+  async saveStudentRemark(remark: StudentRemark): Promise<void> {
+    await this.requireFeature(remark.schoolId, "basic_exam_reports");
+    this.requireSchoolId(remark.schoolId, "saveStudentRemark");
+    await setDoc(doc(firestore, "student_remarks", remark.id), remark);
+  }
+
+  // --- Student Skills ---
+  async getStudentSkills(
+    schoolId?: string,
+    classId?: string,
+  ): Promise<StudentSkills[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getStudentSkills");
+    if (!classId) return [];
+    const q = query(
+      collection(firestore, "student_skills"),
+      where("schoolId", "==", scopedSchoolId),
+      where("classId", "==", classId),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => d.data() as StudentSkills);
+  }
+
+  async getStudentSkillsByStudent(
+    schoolId?: string,
+    studentId?: string,
+  ): Promise<StudentSkills[]> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getStudentSkillsByStudent",
+    );
+    if (!studentId) return [];
+    const q = query(
+      collection(firestore, "student_skills"),
+      where("schoolId", "==", scopedSchoolId),
+      where("studentId", "==", studentId),
+    );
+    try {
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => d.data() as StudentSkills);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getStudentSkillsByStudent unavailable: permission denied");
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async saveStudentSkills(skills: StudentSkills): Promise<void> {
+    await this.requireFeature(skills.schoolId, "basic_exam_reports");
+    this.requireSchoolId(skills.schoolId, "saveStudentSkills");
+    await setDoc(doc(firestore, "student_skills", skills.id), skills);
+  }
+
+  // --- Notifications (Admin Activity Log) ---
+  async addSystemNotification(
+    message: string,
+    type: "attendance" | "assessment" | "system",
+    schoolId?: string,
+  ): Promise<void> {
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "addSystemNotification",
+    );
+    const id = `${scopedSchoolId}_${Date.now()}`;
+    const notification: SystemNotification = {
+      id,
+      schoolId: scopedSchoolId,
+      message,
+      createdAt: Date.now(),
+      isRead: false,
+      type,
+    };
+    try {
+      await setDoc(doc(firestore, "admin_notifications", id), notification);
+    } catch (error) {
+      console.warn("Failed to create system notification", error);
+    }
+  }
+
+  async getSystemNotifications(
+    schoolId?: string,
+  ): Promise<SystemNotification[]> {
+    const baseRef = collection(firestore, "admin_notifications");
+    const q = schoolId
+      ? query(baseRef, where("schoolId", "==", schoolId), limit(20))
+      : query(baseRef, limit(50));
+    const snap = await getDocs(q);
+    return snap.docs
+      .map((d) => d.data() as SystemNotification)
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  }
+
+  async markNotificationAsRead(id: string): Promise<void> {
+    await updateDoc(doc(firestore, "admin_notifications", id), {
+      isRead: true,
+    });
+  }
+
+  async deleteSystemNotification(id: string): Promise<void> {
+    await deleteDoc(doc(firestore, "admin_notifications", id));
+  }
+
+  // --- Timetables ---
+  async getTimetable(
+    schoolId?: string,
+    classId?: string,
+  ): Promise<ClassTimetable | undefined> {
+    await this.requireFeature(schoolId, "timetable");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getTimetable");
+    if (!classId) return undefined;
+    const q = query(
+      collection(firestore, "timetables"),
+      where("schoolId", "==", scopedSchoolId),
+      where("classId", "==", classId),
+      limit(1),
+    );
+    try {
+      const snap = await getDocs(q);
+      return snap.empty ? undefined : (snap.docs[0].data() as ClassTimetable);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getTimetable unavailable: permission denied");
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  async saveTimetable(timetable: ClassTimetable): Promise<void> {
+    await this.requireFeature(timetable.schoolId, "timetable");
+    const scopedSchoolId = this.requireSchoolId(
+      timetable.schoolId,
+      "saveTimetable",
+    );
+    await setDoc(
+      doc(firestore, "timetables", `${scopedSchoolId}_${timetable.classId}`),
+      { ...timetable, schoolId: scopedSchoolId },
+    );
+  }
+
+  // --- Dashboard/Aggregates ---
+  async getStudentPerformance(
+    schoolId: string,
+    studentId: string,
+    classId: string,
+  ) {
+    await this.requireFeature(schoolId, "basic_exam_reports");
+    const attendanceRecords = await this.getClassAttendance(schoolId, classId);
+    const schoolConfig = await this.getSchoolConfig(schoolId);
+    const holidayDates = collectHolidayDateKeys([
+      ...attendanceRecords.filter((r) => r.isHoliday).map((r) => r.date),
+      ...(schoolConfig.holidayDates || []),
+    ]);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const vacationDate = schoolConfig.vacationDate
+      ? new Date(`${schoolConfig.vacationDate}T00:00:00`)
+      : null;
+    const endDate = vacationDate && vacationDate < today ? vacationDate : today;
+
+    let schoolDates = getExpectedSchoolDayKeys({
+      reopenDate: schoolConfig.schoolReopenDate,
+      endDate,
+      holidayDates: Array.from(holidayDates),
+      vacationDate: schoolConfig.vacationDate,
+      nextTermBegins: schoolConfig.nextTermBegins,
+    });
+
+    // Schools without term dates fall back to dates where attendance was
+    // actually recorded. A set prevents legacy duplicate records inflating totals.
+    if (!schoolDates.length) {
+      schoolDates = Array.from(
+        new Set(
+          attendanceRecords
+            .filter((r) => !r.isHoliday && !holidayDates.has(r.date))
+            .map((r) => r.date),
+        ),
+      ).sort();
+    }
+
+    const schoolDateSet = new Set(schoolDates);
+    const normalizedStudentId = studentId.trim();
+    const presentDates = Array.from(
+      new Set(
+        attendanceRecords
+          .filter(
+            (r) =>
+              !r.isHoliday &&
+              schoolDateSet.has(r.date) &&
+              r.presentStudentIds?.some(
+                (id) => id.trim() === normalizedStudentId,
+              ),
+          )
+          .map((r) => r.date),
+      ),
+    ).sort();
+    const totalDays = schoolDates.length;
+    const presentDays = presentDates.length;
+    const attendancePercentage =
+      totalDays === 0 ? 0 : Math.round((presentDays / totalDays) * 100);
+
+    const q = query(
+      collection(firestore, "assessments"),
+      where("schoolId", "==", schoolId),
+      where("studentId", "==", studentId),
+    );
+    let allAssessments: Assessment[] = [];
+    try {
+      const snap = await getDocs(q);
+      allAssessments = snap.docs
+        .map((d) => d.data() as Assessment)
+        .filter((a) => true);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getStudentPerformance assessments unavailable: permission denied");
+      } else {
+        throw error;
+      }
+    }
+
+    const subjects = await this.getSubjects(schoolId, classId);
+
+    const grades = subjects.map((subject) => {
+      const found = allAssessments.find((a) => a.subject === subject);
+      if (found) return found;
+      return { subject, total: 0 } as Partial<Assessment>;
+    });
+
+    return {
+      attendance: {
+        total: totalDays,
+        present: presentDays,
+        percentage: attendancePercentage,
+        schoolDates,
+        presentDates,
+      },
+      grades,
+    };
+  }
+
+  async getDashboardStats(schoolId?: string) {
+    await this.requireFeature(schoolId, "basic_analytics");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getDashboardStats");
+    const [studentsSnap, usersSnap, schoolSnap, config] = await Promise.all([
+      getDocs(
+        query(
+          collection(firestore, "students"),
+          where("schoolId", "==", scopedSchoolId),
+        ),
+      ),
+      getDocs(
+        query(
+          collection(firestore, "users"),
+          where("schoolId", "==", scopedSchoolId),
+        ),
+      ),
+      getDoc(doc(firestore, "schools", scopedSchoolId)),
+      this.getSchoolConfig(scopedSchoolId),
+    ]);
+
+    const students = studentsSnap.docs.map((d) => d.data() as Student);
+    const users = usersSnap.docs.map((d) => d.data() as User);
+    const schoolData = schoolSnap.exists() ? (schoolSnap.data() as School) : null;
+    const filteredClasses = getFilteredClasses(schoolData?.schoolType);
+    const today = new Date();
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const fallbackStart = new Date(today);
+    fallbackStart.setDate(fallbackStart.getDate() - 120);
+    const fallbackStartKey = `${fallbackStart.getFullYear()}-${String(fallbackStart.getMonth() + 1).padStart(2, "0")}-${String(fallbackStart.getDate()).padStart(2, "0")}`;
+    const attendanceStartDate = config.schoolReopenDate || fallbackStartKey;
+    const attendanceEndDate =
+      config.vacationDate && config.vacationDate < todayKey
+        ? config.vacationDate
+        : todayKey;
+    let attendanceDocs: AttendanceRecord[] = [];
+    try {
+      const attendanceSnap = await getDocs(
+        query(
+          collection(firestore, "attendance"),
+          where("schoolId", "==", scopedSchoolId),
+          where("date", ">=", attendanceStartDate),
+          where("date", "<=", attendanceEndDate),
+        ),
+      );
+      attendanceDocs = attendanceSnap.docs.map((d) => d.data() as AttendanceRecord);
+    } catch (error) {
+      console.debug(
+        "[mockDb] getDashboardStats attendance range query failed, using school scoped fallback",
+        error,
+      );
+      try {
+        const fallbackSnap = await getDocs(
+          query(
+            collection(firestore, "attendance"),
+            where("schoolId", "==", scopedSchoolId),
+          ),
+        );
+        attendanceDocs = fallbackSnap.docs
+          .map((d) => d.data() as AttendanceRecord)
+          .filter(
+            (record) =>
+              record.date >= attendanceStartDate &&
+              record.date <= attendanceEndDate,
+          );
+      } catch (fallbackError) {
+        console.debug(
+          "[mockDb] getDashboardStats attendance fallback failed, using empty attendance",
+          fallbackError,
+        );
+        attendanceDocs = [];
+      }
+    }
+    const configHolidaySet = new Set(
+      (config.holidayDates || []).map((h) => h.date),
+    );
+    const attendance = attendanceDocs.filter(
+        (record) => !record.isHoliday && !configHolidaySet.has(record.date),
+      );
+
+    const male = students.filter((s) => s.gender === "Male").length;
+    const female = students.filter((s) => s.gender === "Female").length;
+
+    const classAttendance = filteredClasses.map((cls) => {
+      const records = attendance.filter((r) => r.classId === cls.id);
+      const studentsInClass = students.filter((s) => s.classId === cls.id);
+
+      if (records.length > 0 && studentsInClass.length > 0) {
+        const totalPossible = records.length * studentsInClass.length;
+        const totalPresent = records.reduce(
+          (sum, r) => sum + r.presentStudentIds.length,
+          0,
+        );
+        const pct = Math.round((totalPresent / totalPossible) * 100);
+        return { className: cls.name, percentage: pct, id: cls.id };
+      }
+
+      return { className: cls.name, percentage: 0, id: cls.id };
+    });
+
+    return {
+      studentsCount: students.length,
+      teachersCount: users.filter((u) => u.role === UserRole.TEACHER).length,
+      gender: { male, female },
+      classAttendance,
+    };
+  }
+
+  async getDashboardSummary(schoolId?: string) {
+    await this.requireFeature(schoolId, "basic_analytics");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getDashboardSummary",
+    );
+    const [studentsCountSnap, teachersCountSnap] = await Promise.all([
+      getCountFromServer(
+        query(
+          collection(firestore, "students"),
+          where("schoolId", "==", scopedSchoolId),
+        ),
+      ),
+      getCountFromServer(
+        query(
+          collection(firestore, "users"),
+          where("schoolId", "==", scopedSchoolId),
+          where("role", "==", UserRole.TEACHER),
+        ),
+      ),
+    ]);
+
+    return {
+      studentsCount: studentsCountSnap.data().count,
+      teachersCount: teachersCountSnap.data().count,
+    };
+  }
+
+  // --- Teacher Attendance ---
+  async getTeacherAttendance(
+    schoolId?: string,
+    teacherId?: string,
+    date?: string,
+  ): Promise<TeacherAttendanceRecord | undefined> {
+    await this.requireFeature(schoolId, "teacher_attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getTeacherAttendance",
+    );
+    if (!teacherId || !date) return undefined;
+    const q = query(
+      collection(firestore, "teacher_attendance"),
+      where("schoolId", "==", scopedSchoolId),
+      where("teacherId", "==", teacherId),
+      where("date", "==", date),
+    );
+    try {
+      const snap = await getDocs(q);
+      if (snap.empty) return undefined;
+      const records = snap.docs.map((docSnap) => {
+        const data = docSnap.data() as TeacherAttendanceRecord;
+        return { ...data, id: data.id || docSnap.id };
+      });
+      return this.selectPreferredTeacherAttendanceRecord(records);
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getTeacherAttendance unavailable: permission denied");
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  async getTeacherAttendanceByDateRange(
+    schoolId?: string,
+    teacherId?: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<TeacherAttendanceRecord[]> {
+    await this.requireFeature(schoolId, "teacher_attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getTeacherAttendanceByDateRange",
+    );
+    if (!teacherId || !startDate || !endDate) return [];
+
+    try {
+      const rangedQuery = query(
+        collection(firestore, "teacher_attendance"),
+        where("schoolId", "==", scopedSchoolId),
+        where("teacherId", "==", teacherId),
+        where("date", ">=", startDate),
+        where("date", "<=", endDate),
+      );
+      const rangedSnap = await getDocs(rangedQuery);
+      return this.dedupeTeacherAttendanceRecords(
+        rangedSnap.docs.map((docSnap) => {
+          const data = docSnap.data() as TeacherAttendanceRecord;
+          return { ...data, id: data.id || docSnap.id };
+        }),
+      );
+    } catch (error) {
+      if (this.isPermissionDeniedError(error)) {
+        console.debug("[mockDb] getTeacherAttendanceByDateRange unavailable: permission denied");
+        return [];
+      }
+      // Fallback for environments missing composite indexes.
+      const fallbackQuery = query(
+        collection(firestore, "teacher_attendance"),
+        where("schoolId", "==", scopedSchoolId),
+        where("teacherId", "==", teacherId),
+      );
+      const fallbackSnap = await getDocs(fallbackQuery);
+      return this.dedupeTeacherAttendanceRecords(
+        fallbackSnap.docs
+          .map((docSnap) => {
+            const data = docSnap.data() as TeacherAttendanceRecord;
+            return { ...data, id: data.id || docSnap.id };
+          })
+          .filter(
+            (record) => record.date >= startDate && record.date <= endDate,
+          ),
+      );
+    }
+  }
+
+  async getTeacherAttendancePendingByDate(
+    schoolId?: string,
+    date?: string,
+  ): Promise<TeacherAttendanceRecord[]> {
+    await this.requireFeature(schoolId, "teacher_attendance");
+    if (!date) return [];
+    const records = await this.getAllTeacherAttendance(schoolId, date);
+    return records.filter((record) => record.approvalStatus === "pending");
+  }
+
+  async getAllPendingTeacherAttendance(
+    schoolId?: string,
+  ): Promise<TeacherAttendanceRecord[]> {
+    await this.requireFeature(schoolId, "teacher_attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getAllPendingTeacherAttendance",
+    );
+    const q = query(
+      collection(firestore, "teacher_attendance"),
+      where("schoolId", "==", scopedSchoolId),
+      where("approvalStatus", "==", "pending"),
+    );
+    const snap = await getDocs(q);
+    return this.dedupeTeacherAttendanceRecords(
+      snap.docs.map((docSnap) => {
+        const data = docSnap.data() as TeacherAttendanceRecord;
+        return { ...data, id: data.id || docSnap.id };
+      }),
+    );
+  }
+
+  async getAllTeacherAttendance(
+    schoolId?: string,
+    date?: string,
+  ): Promise<TeacherAttendanceRecord[]> {
+    await this.requireFeature(schoolId, "teacher_attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getAllTeacherAttendance",
+    );
+    if (!date) return [];
+    const q = query(
+      collection(firestore, "teacher_attendance"),
+      where("schoolId", "==", scopedSchoolId),
+      where("date", "==", date),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => d.data() as TeacherAttendanceRecord);
+  }
+
+  async getAllApprovedTeacherAttendance(
+    schoolId?: string,
+    date?: string,
+  ): Promise<TeacherAttendanceRecord[]> {
+    await this.requireFeature(schoolId, "teacher_attendance");
+    if (!date) return [];
+    const records = await this.getAllTeacherAttendance(schoolId, date);
+    return records.filter((record) => record.approvalStatus === "approved");
+  }
+
+  async saveTeacherAttendance(record: TeacherAttendanceRecord): Promise<void> {
+    await this.requireFeature(record.schoolId, "teacher_attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      record.schoolId,
+      "saveTeacherAttendance",
+    );
+    const id = `${scopedSchoolId}_${record.teacherId}_${record.date}`;
+    await setDoc(doc(firestore, "teacher_attendance", id), {
+      approvalStatus: record.approvalStatus || "approved",
+      ...record,
+      id,
+    });
+  }
+
+  async approveTeacherAttendance(
+    schoolId: string,
+    recordId: string,
+    adminId: string,
+    options?: { teacherId?: string; date?: string },
+  ): Promise<void> {
+    await this.requireFeature(schoolId, "teacher_attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "approveTeacherAttendance",
+    );
+    const updatePayload = {
+      schoolId: scopedSchoolId,
+      approvalStatus: "approved" as const,
+      approvedBy: adminId,
+      approvedAt: Date.now(),
+      rejectedBy: null,
+      rejectedAt: null,
+    };
+
+    if (options?.teacherId && options?.date) {
+      const q = query(
+        collection(firestore, "teacher_attendance"),
+        where("schoolId", "==", scopedSchoolId),
+        where("teacherId", "==", options.teacherId),
+        where("date", "==", options.date),
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        await Promise.all(
+          snap.docs.map((docSnap) => updateDoc(docSnap.ref, updatePayload)),
+        );
+        return;
+      }
+    }
+
+    await updateDoc(
+      doc(firestore, "teacher_attendance", recordId),
+      updatePayload,
+    );
+  }
+
+  async approveTeacherAttendanceBulk(
+    schoolId: string,
+    records: Array<{ recordId?: string; teacherId?: string; date?: string }>,
+    adminId: string,
+  ): Promise<void> {
+    await this.requireFeature(schoolId, "teacher_attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "approveTeacherAttendanceBulk",
+    );
+    if (!records.length) return;
+
+    const updatePayload = {
+      schoolId: scopedSchoolId,
+      approvalStatus: "approved" as const,
+      approvedBy: adminId,
+      approvedAt: Date.now(),
+      rejectedBy: null,
+      rejectedAt: null,
+    };
+
+    const batch = writeBatch(firestore);
+    let hasUpdates = false;
+    const processedKeys = new Set<string>();
+
+    for (const record of records) {
+      const dedupeKey =
+        record.teacherId && record.date
+          ? `${record.teacherId}_${record.date}`
+          : record.recordId || "";
+      if (!dedupeKey || processedKeys.has(dedupeKey)) continue;
+      processedKeys.add(dedupeKey);
+
+      if (record.teacherId && record.date) {
+        const q = query(
+          collection(firestore, "teacher_attendance"),
+          where("schoolId", "==", scopedSchoolId),
+          where("teacherId", "==", record.teacherId),
+          where("date", "==", record.date),
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          snap.docs.forEach((docSnap) => {
+            batch.update(docSnap.ref, updatePayload);
+            hasUpdates = true;
+          });
+          continue;
+        }
+      }
+
+      if (record.recordId) {
+        batch.update(
+          doc(firestore, "teacher_attendance", record.recordId),
+          updatePayload,
+        );
+        hasUpdates = true;
+      }
+    }
+
+    if (!hasUpdates) return;
+    await batch.commit();
+  }
+
+  async rejectTeacherAttendance(
+    schoolId: string,
+    recordId: string,
+    adminId: string,
+    options?: { teacherId?: string; date?: string },
+  ): Promise<void> {
+    await this.requireFeature(schoolId, "teacher_attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "rejectTeacherAttendance",
+    );
+    const updatePayload = {
+      schoolId: scopedSchoolId,
+      approvalStatus: "rejected" as const,
+      status: "absent" as const,
+      rejectedBy: adminId,
+      rejectedAt: Date.now(),
+    };
+
+    if (options?.teacherId && options?.date) {
+      const q = query(
+        collection(firestore, "teacher_attendance"),
+        where("schoolId", "==", scopedSchoolId),
+        where("teacherId", "==", options.teacherId),
+        where("date", "==", options.date),
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        await Promise.all(
+          snap.docs.map((docSnap) => updateDoc(docSnap.ref, updatePayload)),
+        );
+        return;
+      }
+    }
+
+    await updateDoc(
+      doc(firestore, "teacher_attendance", recordId),
+      updatePayload,
+    );
+  }
+
+  async getAllTeacherAttendanceRecords(
+    schoolId?: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<TeacherAttendanceRecord[]> {
+    await this.requireFeature(schoolId, "teacher_attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getAllTeacherAttendanceRecords",
+    );
+    if (startDate && endDate) {
+      try {
+        const q = query(
+          collection(firestore, "teacher_attendance"),
+          where("schoolId", "==", scopedSchoolId),
+          where("date", ">=", startDate),
+          where("date", "<=", endDate),
+        );
+        const snap = await getDocs(q);
+        return this.dedupeTeacherAttendanceRecords(
+          snap.docs.map((docSnap) => {
+            const data = docSnap.data() as TeacherAttendanceRecord;
+            return { ...data, id: data.id || docSnap.id };
+          }),
+        );
+      } catch (error) {
+        console.debug(
+          "Teacher attendance range query failed, falling back to school scoped read",
+          error,
+        );
+        const fallback = await this.getCollectionBySchoolId<TeacherAttendanceRecord>(
+          "teacher_attendance",
+          scopedSchoolId,
+        );
+        return this.dedupeTeacherAttendanceRecords(
+          fallback.filter(
+            (record) => record.date >= startDate && record.date <= endDate,
+          ),
+        );
+      }
+    }
+    return this.getCollectionBySchoolId<TeacherAttendanceRecord>(
+      "teacher_attendance",
+      scopedSchoolId,
+    );
+  }
+
+  async resetAllTeacherAttendance(schoolId?: string): Promise<void> {
+    await this.requireFeature(schoolId, "teacher_attendance");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "resetAllTeacherAttendance",
+    );
+    const q = query(
+      collection(firestore, "teacher_attendance"),
+      where("schoolId", "==", scopedSchoolId),
+    );
+    const snap = await getDocs(q);
+    const deletions = snap.docs.map((d) =>
+      deleteDoc(doc(firestore, "teacher_attendance", d.id)),
+    );
+    await Promise.all(deletions);
+  }
+
+  // --- Admin Remarks ---
+  async getAdminRemark(
+    schoolId?: string,
+    remarkId?: string,
+  ): Promise<AdminRemark | undefined> {
+    await this.requireFeature(schoolId, "basic_exam_reports");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getAdminRemark");
+    if (!remarkId) return undefined;
+    const docRef = doc(firestore, "admin_remarks", remarkId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return undefined;
+    const data = snap.data() as AdminRemark;
+    return data.schoolId === scopedSchoolId ? data : undefined;
+  }
+
+  async saveAdminRemark(remark: AdminRemark): Promise<void> {
+    await this.requireFeature(remark.schoolId, "basic_exam_reports");
+    this.requireSchoolId(remark.schoolId, "saveAdminRemark");
+    await setDoc(doc(firestore, "admin_remarks", remark.id), remark);
+  }
+
+  /**
+   * Create a full-school snapshot for the current term context.
+   */
+  async createTermBackup(
+    currentConfig: SchoolConfig,
+    currentTerm: string,
+    academicYear: string,
+    options?: {
+      dedupeKey?: string;
+      backupType?: "term-reset" | "manual" | "safety-restore";
+      allowExisting?: boolean;
+    },
+  ): Promise<void> {
+    await this.requireFeature(currentConfig.schoolId, "backups");
+    console.log(`Creating backup for ${currentTerm}, ${academicYear}...`);
+
+    try {
+      const schoolId = this.requireSchoolId(
+        currentConfig.schoolId,
+        "createTermBackup",
+      );
+      const backupType = options?.backupType || "term-reset";
+      const dedupeKey =
+        options?.dedupeKey ||
+        `${backupType}_${schoolId}_${currentTerm}_${academicYear}`;
+      if (backupType === "term-reset" && !options?.allowExisting) {
+        try {
+          const existingSnap = await getDocs(
+            query(
+              collection(firestore, "backups"),
+              where("schoolId", "==", schoolId),
+              where("term", "==", currentTerm),
+              where("academicYear", "==", academicYear),
+              where("backupType", "==", "term-reset"),
+              limit(1),
+            ),
+          );
+          if (!existingSnap.empty) {
+            console.log(
+              `Backup already exists for ${currentTerm}, ${academicYear}. Skipping.`,
+            );
+            return;
+          }
+        } catch (existingBackupError) {
+          console.warn(
+            "Skipping backup dedupe preflight and continuing with create",
+            existingBackupError,
+          );
+        }
+      }
+
+      let fees: FeeDefinition[] = [];
+      let studentLedgers: StudentFeeLedger[] = [];
+      let financeSettings: FinanceSettings | null = null;
+      let financePayments: StudentFeePayment[] = [];
+      let billingPayments: Array<Record<string, unknown>> = [];
+      let activityLogs: any[] = [];
+      let schoolProfile: Partial<School> | null = null;
+
+      try {
+        const financeSnapshot = await this.getSchoolFinanceSnapshot(schoolId);
+        fees = financeSnapshot.fees;
+        studentLedgers = financeSnapshot.studentLedgers;
+        financePayments = financeSnapshot.financePayments;
+        billingPayments = financeSnapshot.billingPayments;
+        financeSettings = financeSnapshot.financeSettings;
+      } catch (financeError) {
+        console.warn("Skipping finance backup payload", financeError);
+      }
+
+      try {
+        const [legacyActivityLogs, schoolActivityLogs] = await Promise.all([
+          this.getCollectionBySchoolId<any>("activity_logs", schoolId).catch(
+            () => [],
+          ),
+          this.getSchoolActivityLogs(schoolId).catch(() => []),
+        ]);
+        const mergedActivityLogs = [
+          ...legacyActivityLogs,
+          ...schoolActivityLogs,
+        ];
+        const dedupedActivityLogs = new Map<string, any>();
+        mergedActivityLogs.forEach((entry, index) => {
+          const key =
+            entry?.id ||
+            `${entry?.actionType || entry?.eventType || "activity"}_${entry?.entityId || "entry"}_${entry?.timestamp || index}`;
+          dedupedActivityLogs.set(
+            key,
+            entry?.id ? entry : { ...entry, id: key },
+          );
+        });
+        activityLogs = Array.from(dedupedActivityLogs.values());
+      } catch (activityLogError) {
+        console.warn("Skipping activity log backup payload", activityLogError);
+      }
+
+      const safeReadSchoolCollection = async <T,>(
+        collectionName: string,
+      ): Promise<T[]> => {
+        try {
+          return await this.getCollectionBySchoolId<T>(collectionName, schoolId);
+        } catch (collectionError) {
+          console.warn(
+            `Skipping ${collectionName} backup payload`,
+            collectionError,
+          );
+          return [];
+        }
+      };
+
+      const [
+        students,
+        users,
+        attendanceRecords,
+        teacherAttendanceRecords,
+        assessments,
+        studentRemarks,
+        adminRemarks,
+        studentSkills,
+        timetables,
+        notices,
+        adminNotifications,
+      ] = await Promise.all([
+        safeReadSchoolCollection<Student>("students"),
+        safeReadSchoolCollection<User>("users"),
+        safeReadSchoolCollection<AttendanceRecord>("attendance"),
+        safeReadSchoolCollection<TeacherAttendanceRecord>("teacher_attendance"),
+        safeReadSchoolCollection<Assessment>("assessments"),
+        safeReadSchoolCollection<StudentRemark>("student_remarks"),
+        safeReadSchoolCollection<AdminRemark>("admin_remarks"),
+        safeReadSchoolCollection<StudentSkills>("student_skills"),
+        safeReadSchoolCollection<ClassTimetable>("timetables"),
+        safeReadSchoolCollection<Notice>("notices"),
+        safeReadSchoolCollection<SystemNotification>("admin_notifications"),
+      ]);
+
+      const classSubjects =
+        await safeReadSchoolCollection<ClassSubjectConfig>("class_subjects");
+
+      const settingsSnap = await getDoc(doc(firestore, "settings", schoolId));
+      const schoolSettings = settingsSnap.exists()
+        ? (settingsSnap.data() as SchoolConfig)
+        : undefined;
+      schoolProfile = await this.getSchoolProfileSnapshot(schoolId);
+
+      const backup = this.stripUndefinedDeep<Backup>({
+        id: this.generateBackupId("backup"),
+        schoolId,
+        schoolName:
+          currentConfig.schoolName || schoolSettings?.schoolName || "",
+        timestamp: Date.now(),
+        term: currentTerm,
+        academicYear: academicYear,
+        backupType,
+        dedupeKey,
+        data: {
+          schoolConfig: currentConfig,
+          schoolSettings,
+          schoolProfile,
+          students,
+          attendanceRecords,
+          teacherAttendanceRecords,
+          assessments,
+          studentRemarks,
+          adminRemarks,
+          studentSkills,
+          timetables,
+          users,
+          classSubjects,
+          notices,
+          adminNotifications,
+          activityLogs,
+          payments: financePayments,
+          billingPayments,
+          fees,
+          studentLedgers,
+          financeSettings,
+        },
+      });
+
+      await setDoc(doc(firestore, "backups", backup.id), backup);
+      console.log(`Backup created successfully: ${backup.id}`);
+
+      await logActivity({
+        schoolId,
+        actorUid: auth.currentUser?.uid || null,
+        actorRole: (await this.getCurrentActorRole()) || UserRole.SCHOOL_ADMIN,
+        eventType: "backup_created",
+        entityId: backup.id,
+        meta: {
+          term: currentTerm,
+          academicYear,
+          backupType,
+        },
+      });
+    } catch (error) {
+      console.error("Error creating backup:", error);
+      throw error;
+    }
+  }
+
+  async createSystemBackup(currentConfig: SchoolConfig): Promise<void> {
+    const schoolId = this.requireSchoolId(
+      currentConfig.schoolId,
+      "createSystemBackup",
+    );
+    await this.createTermBackup(
+      currentConfig,
+      currentConfig.currentTerm,
+      currentConfig.academicYear,
+      {
+        backupType: "manual",
+        allowExisting: true,
+        dedupeKey: `manual_${schoolId}_${Date.now()}`,
+      },
+    );
+  }
+
+  // --- Teacher Attendance Analytics ---
+  async getTeacherAttendanceAnalytics(
+    schoolId?: string,
+    termStartDate?: string,
+    vacationDate?: string,
+  ): Promise<TeacherAttendanceAnalytics[]> {
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "getTeacherAttendanceAnalytics",
+    );
+    const config = await this.getSchoolConfig(scopedSchoolId);
+
+    // If no explicit start date is provided and the school hasn't reopened, return empty.
+    if (!termStartDate && !config.schoolReopenDate) {
+      return [];
+    }
+
+    const teachers = await this.getUsers(scopedSchoolId);
+    const teacherUsers = teachers.filter((t) => t.role === UserRole.TEACHER);
+    const allRecords =
+      await this.getAllTeacherAttendanceRecords(scopedSchoolId);
+
+    // Use config.academicYear for fallback if schoolReopenDate is not set
+    const fallbackAcademicYear = config.academicYear || ACADEMIC_YEAR; // Use config.academicYear if present, else fallback to constant
+    const defaultStartDate = `${fallbackAcademicYear.split("-")[0]}-09-01`;
+
+    const startDate =
+      termStartDate || config.schoolReopenDate || defaultStartDate;
+    const endDate = vacationDate || new Date().toISOString().split("T")[0];
+
+    const analytics: TeacherAttendanceAnalytics[] = [];
+
+    for (const teacher of teacherUsers) {
+      const teacherRecords = allRecords.filter(
+        (r) =>
+          r.teacherId === teacher.id &&
+          r.date >= startDate &&
+          r.date <= endDate &&
+          !r.isHoliday &&
+          r.approvalStatus !== "pending",
+      );
+
+      const recordsInRange = teacherRecords; // Already filtered above
+
+      const monthlyData: Record<string, { total: number; present: number }> =
+        {};
+
+      recordsInRange.forEach((record) => {
+        const date = new Date(record.date);
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+
+        if (!monthlyData[monthKey]) {
+          monthlyData[monthKey] = { total: 0, present: 0 };
+        }
+
+        monthlyData[monthKey].total += 1;
+        if (
+          record.status === "present" &&
+          record.approvalStatus === "approved"
+        ) {
+          monthlyData[monthKey].present += 1;
+        }
+      });
+
+      const monthlyBreakdown: MonthlyTeacherAttendance[] = Object.entries(
+        monthlyData,
+      )
+        .map(([month, data]) => {
+          const [year, monthNum] = month.split("-");
+          const attendanceRate =
+            data.total > 0
+              ? Math.min(Math.round((data.present / data.total) * 100), 100)
+              : 0;
+
+          return {
+            teacherId: teacher.id,
+            teacherName: teacher.fullName,
+            month,
+            year: parseInt(year),
+            totalWorkingDays: data.total,
+            presentDays: data.present,
+            absentDays: data.total - data.present,
+            attendanceRate,
+            trend: "stable" as const,
+          };
+        })
+        .sort((a, b) => a.month.localeCompare(b.month));
+
+      for (let i = 0; i < monthlyBreakdown.length; i++) {
+        if (i > 0) {
+          const current = monthlyBreakdown[i].attendanceRate;
+          const previous = monthlyBreakdown[i - 1].attendanceRate;
+          if (current > previous + 5) {
+            monthlyBreakdown[i].trend = "improving";
+          } else if (current < previous - 5) {
+            monthlyBreakdown[i].trend = "declining";
+          } else {
+            monthlyBreakdown[i].trend = "stable";
+          }
+        }
+      }
+
+      const totalDays = monthlyBreakdown.reduce(
+        (sum, month) => sum + month.totalWorkingDays,
+        0,
+      );
+      const totalPresent = monthlyBreakdown.reduce(
+        (sum, month) => sum + month.presentDays,
+        0,
+      );
+      const overallAttendance =
+        totalDays > 0
+          ? Math.min(Math.round((totalPresent / totalDays) * 100), 100)
+          : 0;
+
+      analytics.push({
+        teacherId: teacher.id,
+        teacherName: teacher.fullName,
+        photoUrl: teacher.photoUrl,
+        overallAttendance,
+        monthlyBreakdown,
+        termStartDate: startDate,
+        vacationDate:
+          endDate !== new Date().toISOString().split("T")[0]
+            ? endDate
+            : undefined,
+      });
+    }
+
+    return analytics;
+  }
+  // --- Backups ---
+  private async listBackupRecordsForSchool(
+    schoolId: string,
+  ): Promise<Partial<Backup>[]> {
+    const snap = await getDocs(
+      query(
+        collection(firestore, "backups"),
+        where("schoolId", "==", schoolId),
+      ),
+    );
+    return snap.docs
+      .map((docSnap) => docSnap.data() as Partial<Backup>)
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  }
+
+  private filterBackupRows(
+    rows: Partial<Backup>[],
+    filters: {
+      term?: string;
+      academicYear?: string;
+      date?: string;
+      backupTypes?: BackupType[];
+    } = {},
+  ): Partial<Backup>[] {
+    return rows.filter((row) => {
+      if (filters.term && row.term !== filters.term) return false;
+      if (filters.academicYear && row.academicYear !== filters.academicYear) {
+        return false;
+      }
+      if (
+        filters.backupTypes?.length &&
+        !filters.backupTypes.includes(
+          (row.backupType || "manual") as BackupType,
+        )
+      ) {
+        return false;
+      }
+      if (filters.date) {
+        const start = new Date(filters.date).getTime();
+        const end = start + 24 * 60 * 60 * 1000 - 1;
+        if ((row.timestamp || 0) < start || (row.timestamp || 0) > end) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  async getBackups(filters?: {
+    schoolId?: string;
+    term?: string;
+    academicYear?: string;
+    date?: string;
+  }): Promise<Partial<Backup>[]> {
+    await this.requireFeature(filters?.schoolId, "backups");
+    const scopedSchoolId = this.requireSchoolId(
+      filters?.schoolId,
+      "getBackups",
+    );
+    const rows = await this.listBackupRecordsForSchool(scopedSchoolId);
+    return this.filterBackupRows(rows, {
+      term: filters?.term,
+      academicYear: filters?.academicYear,
+      date: filters?.date,
+      backupTypes: ["term-reset", "manual", "safety-restore"],
+    });
+  }
+
+  async getRecoveryRecords(filters?: {
+    schoolId?: string;
+    date?: string;
+    backupType?: "recovery-point" | "recycle-bin";
+  }): Promise<Partial<Backup>[]> {
+    await this.requireFeature(filters?.schoolId, "backups");
+    const scopedSchoolId = this.requireSchoolId(
+      filters?.schoolId,
+      "getRecoveryRecords",
+    );
+    const rows = await this.listBackupRecordsForSchool(scopedSchoolId);
+    return this.filterBackupRows(rows, {
+      date: filters?.date,
+      backupTypes: filters?.backupType
+        ? [filters.backupType]
+        : ["recovery-point", "recycle-bin"],
+    });
+  }
+
+  async getBackupDetails(
+    schoolId?: string,
+    id?: string,
+  ): Promise<Backup | undefined> {
+    await this.requireFeature(schoolId, "backups");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getBackupDetails");
+    if (!id) return undefined;
+    const snap = await getDoc(doc(firestore, "backups", id));
+    if (!snap.exists()) return undefined;
+    const backup = snap.data() as Backup;
+    if (backup.schoolId !== scopedSchoolId) return undefined;
+
+    if (backup.storageVersion === 2 && backup.dataCollectionRef) {
+      const manifestChunkIds = (backup.chunks || []).flatMap((chunk) =>
+        Array.isArray(chunk.chunkIds) ? chunk.chunkIds : [],
+      );
+      const chunkDocs: Array<{
+        key?: string;
+        index?: number;
+        rows?: any[];
+      }> = [];
+
+      if (manifestChunkIds.length > 0) {
+        for (const chunkId of manifestChunkIds) {
+          const chunkSnap = await getDoc(
+            doc(firestore, "backups", id, "chunks", chunkId),
+          );
+          if (chunkSnap.exists()) {
+            chunkDocs.push(chunkSnap.data() as {
+              key?: string;
+              index?: number;
+              rows?: any[];
+            });
+          }
+        }
+      } else {
+        const chunksSnapshot = await getDocs(
+          query(collection(firestore, "backups", id, "chunks"), limit(5)),
+        );
+        chunkDocs.push(
+          ...chunksSnapshot.docs.map((chunk) => chunk.data() as {
+            key?: string;
+            index?: number;
+            rows?: any[];
+          }),
+        );
+      }
+
+      const hydratedData: Record<string, any> = { ...(backup.data || {}) };
+      const orderedChunks = chunkDocs.sort(
+        (a, b) => Number(a.index || 0) - Number(b.index || 0),
+      );
+      orderedChunks.forEach((chunk) => {
+        if (!chunk.key || !Array.isArray(chunk.rows)) return;
+        hydratedData[chunk.key] = [
+          ...(hydratedData[chunk.key] || []),
+          ...chunk.rows,
+        ];
+      });
+      return { ...backup, data: hydratedData } as Backup;
+    }
+
+    return backup;
+  }
+
+  private async deleteBackupDocument(
+    id: string,
+    backup?: Partial<Backup> | null,
+  ): Promise<void> {
+    const chunksRef = collection(firestore, "backups", id, "chunks");
+    const manifestChunkIds = (backup?.chunks || []).flatMap((chunk) =>
+      Array.isArray(chunk.chunkIds) ? chunk.chunkIds : [],
+    );
+
+    if (manifestChunkIds.length > 0) {
+      for (let index = 0; index < manifestChunkIds.length; index += 5) {
+        const batch = writeBatch(firestore);
+        manifestChunkIds.slice(index, index + 5).forEach((chunkId) => {
+          batch.delete(doc(firestore, "backups", id, "chunks", chunkId));
+        });
+        await batch.commit();
+      }
+    } else {
+      while (true) {
+        const chunksSnapshot = await getDocs(query(chunksRef, limit(5)));
+        if (chunksSnapshot.empty) break;
+        const batch = writeBatch(firestore);
+        chunksSnapshot.docs.forEach((chunk) => batch.delete(chunk.ref));
+        await batch.commit();
+      }
+    }
+    await deleteDoc(doc(firestore, "backups", id));
+  }
+
+  async restoreBackup(schoolId?: string, id?: string): Promise<void> {
+    await this.requireFeature(schoolId, "backups");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "restoreBackup");
+    if (!id) {
+      throw new Error("BACKUP_ID_REQUIRED");
+    }
+
+    const backup = await this.getBackupDetails(scopedSchoolId, id);
+    if (!backup?.data) {
+      throw new Error("BACKUP_NOT_FOUND");
+    }
+
+    const currentConfig = await this.getSchoolConfig(scopedSchoolId);
+    await this.createTermBackup(
+      currentConfig,
+      currentConfig.currentTerm,
+      currentConfig.academicYear,
+      {
+        backupType: "safety-restore",
+        allowExisting: true,
+        dedupeKey: `manual_restore_${scopedSchoolId}_${Date.now()}`,
+      },
+    );
+
+    const restoredSettings = {
+      ...(backup.data.schoolSettings ||
+        backup.data.schoolConfig ||
+        currentConfig),
+      schoolId: scopedSchoolId,
+    } as SchoolConfig;
+
+    await setDoc(doc(firestore, "settings", scopedSchoolId), restoredSettings, {
+      merge: false,
+    });
+    await this.restoreSchoolProfileSnapshot(
+      scopedSchoolId,
+      backup.data.schoolProfile,
+      restoredSettings,
+    );
+
+    await this.replaceSchoolScopedCollection(
+      "students",
+      scopedSchoolId,
+      backup.data.students || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "attendance",
+      scopedSchoolId,
+      backup.data.attendanceRecords || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "teacher_attendance",
+      scopedSchoolId,
+      backup.data.teacherAttendanceRecords || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "assessments",
+      scopedSchoolId,
+      backup.data.assessments || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "student_remarks",
+      scopedSchoolId,
+      backup.data.studentRemarks || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "student_skills",
+      scopedSchoolId,
+      backup.data.studentSkills || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "admin_remarks",
+      scopedSchoolId,
+      backup.data.adminRemarks || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "notices",
+      scopedSchoolId,
+      backup.data.notices || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "admin_notifications",
+      scopedSchoolId,
+      backup.data.adminNotifications || [],
+      (row) => row.id,
+    );
+    await this.replaceSchoolScopedCollection(
+      "timetables",
+      scopedSchoolId,
+      backup.data.timetables || [],
+      (row) => `${scopedSchoolId}_${row.classId}`,
+    );
+    await this.replaceSchoolScopedCollection(
+      "class_subjects",
+      scopedSchoolId,
+      backup.data.classSubjects || [],
+      (row) => `${scopedSchoolId}_${row.classId}`,
+    );
+
+    const useFinanceV2 = await this.useFinanceV2(scopedSchoolId);
+    const financePayments = (backup.data.payments || []).filter(
+      (payment: any) => payment?.studentId,
+    );
+    if (Array.isArray(backup.data.payments)) {
+      if (useFinanceV2) {
+        await this.replaceCollectionAtPath(
+          ["schools", scopedSchoolId, "payments"],
+          financePayments.map((payment: any) => ({
+            ...payment,
+            schoolId: scopedSchoolId,
+          })),
+          (row: any) => row.id || row.reference,
+        );
+      } else {
+        const paymentSnap = await getDocs(
+          query(
+            collection(firestore, "payments"),
+            where("schoolId", "==", scopedSchoolId),
+          ),
+        );
+        const operations: Array<
+          (batch: ReturnType<typeof writeBatch>) => void
+        > = [];
+
+        paymentSnap.docs.forEach((docSnap) => {
+          if (docSnap.data()?.studentId) {
+            operations.push((batch) => batch.delete(docSnap.ref));
+          }
+        });
+
+        financePayments.forEach((payment: any) => {
+          const normalizedPayment = {
+            ...payment,
+            schoolId: scopedSchoolId,
+          };
+          operations.push((batch) =>
+            batch.set(
+              doc(
+                firestore,
+                "payments",
+                normalizedPayment.id || normalizedPayment.reference,
+              ),
+              normalizedPayment,
+            ),
+          );
+        });
+
+        await this.commitChunkedOperations(operations);
+      }
+    }
+
+    if (Array.isArray(backup.data.billingPayments)) {
+      const billingPaymentSnap = await getDocs(
+        query(
+          collection(firestore, "payments"),
+          where("schoolId", "==", scopedSchoolId),
+        ),
+      );
+      const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> =
+        [];
+
+      billingPaymentSnap.docs.forEach((docSnap) => {
+        if (!docSnap.data()?.studentId) {
+          operations.push((batch) => batch.delete(docSnap.ref));
+        }
+      });
+
+      backup.data.billingPayments
+        .filter((payment: any) => payment && !payment?.studentId)
+        .forEach((payment: any, index: number) => {
+          const paymentId =
+            payment.id ||
+            payment.reference ||
+            payment.transactionId ||
+            `billing_${backup.id}_${index}`;
+          operations.push((batch) =>
+            batch.set(doc(firestore, "payments", paymentId), {
+              ...payment,
+              id: paymentId,
+              schoolId: scopedSchoolId,
+            }),
+          );
+        });
+
+      await this.commitChunkedOperations(operations);
+    }
+
+    if (backup.data.financeSettings) {
+      await setDoc(
+        doc(firestore, "schools", scopedSchoolId, "financeSettings", "main"),
+        {
+          ...backup.data.financeSettings,
+          schoolId: scopedSchoolId,
+        },
+        { merge: true },
+      );
+    }
+
+    if (backup.data.fees) {
+      const feePath = useFinanceV2
+        ? ["schools", scopedSchoolId, "fees"]
+        : ["fees"];
+      await this.replaceCollectionAtPath(
+        feePath,
+        backup.data.fees.map((fee) => ({
+          ...fee,
+          schoolId: scopedSchoolId,
+        })),
+        (row) => row.id,
+      );
+    }
+
+    if (backup.data.studentLedgers) {
+      const ledgerPath = useFinanceV2
+        ? ["schools", scopedSchoolId, "feeLedgers"]
+        : ["student_ledgers"];
+      await this.replaceCollectionAtPath(
+        ledgerPath,
+        backup.data.studentLedgers.map((ledger) => ({
+          ...ledger,
+          schoolId: scopedSchoolId,
+        })),
+        (row) => row.id,
+      );
+    }
+
+    if (Array.isArray(backup.data.activityLogs)) {
+      await this.replaceSchoolActivityLogs(
+        scopedSchoolId,
+        backup.data.activityLogs,
+      );
+    }
+
+    await logActivity({
+      schoolId: scopedSchoolId,
+      actorUid: auth.currentUser?.uid || null,
+      actorRole: (await this.getCurrentActorRole()) || UserRole.SCHOOL_ADMIN,
+      eventType: "backup_restored",
+      entityId: id,
+      meta: {
+        term: backup.term,
+        academicYear: backup.academicYear,
+        backupType: backup.backupType || "manual",
+        module: "Backups",
+      },
+    });
+  }
+
+  async restoreRecoveryRecord(schoolId?: string, id?: string): Promise<void> {
+    await this.requireFeature(schoolId, "backups");
+    const scopedSchoolId = this.requireSchoolId(
+      schoolId,
+      "restoreRecoveryRecord",
+    );
+    if (!id) {
+      throw new Error("BACKUP_ID_REQUIRED");
+    }
+
+    const snapshot = await this.getBackupDetails(scopedSchoolId, id);
+    if (!snapshot) {
+      throw new Error("BACKUP_NOT_FOUND");
+    }
+    if (
+      snapshot.backupType !== "recovery-point" &&
+      snapshot.backupType !== "recycle-bin"
+    ) {
+      throw new Error("RECOVERY_RECORD_REQUIRED");
+    }
+
+    const scopes = snapshot.recoveryMeta?.collections || [];
+    if (!scopes.length) {
+      throw new Error("RECOVERY_SCOPE_MISSING");
+    }
+
+    const currentSnapshot = await this.buildCurrentSnapshotForScopes(
+      scopedSchoolId,
+      scopes,
+    );
+
+    if (Object.keys(currentSnapshot).length > 0) {
+      await this.createRecoveryPoint({
+        schoolId: scopedSchoolId,
+        title: `Safety snapshot before restoring ${snapshot.recoveryMeta?.title || "recovery record"}`,
+        description:
+          "Automatically captured before replaying a recovery record.",
+        sourceAction: "restore_recovery_record",
+        sourceModule: "Recovery Center",
+        entityType: snapshot.recoveryMeta?.entityType,
+        entityId: snapshot.recoveryMeta?.entityId,
+        entityLabel: snapshot.recoveryMeta?.entityLabel,
+        recordCount:
+          snapshot.recoveryMeta?.recordCount ||
+          scopes.reduce(
+            (count, scope) => count + (scope.recordIds?.length || 0),
+            0,
+          ),
+        collections: scopes,
+        data: currentSnapshot,
+      });
+    }
+
+    await this.restoreSnapshotScopes(scopedSchoolId, snapshot);
+
+    await logActivity({
+      schoolId: scopedSchoolId,
+      actorUid: auth.currentUser?.uid || null,
+      actorRole: (await this.getCurrentActorRole()) || UserRole.SCHOOL_ADMIN,
+      eventType:
+        snapshot.backupType === "recycle-bin"
+          ? "recycle_bin_restored"
+          : "recovery_point_restored",
+      entityId: id,
+      meta: {
+        status: "success",
+        module: "Recovery Center",
+        title: snapshot.recoveryMeta?.title || "",
+        entityType: snapshot.recoveryMeta?.entityType || "",
+        entityLabel: snapshot.recoveryMeta?.entityLabel || "",
+      },
+    });
+
+    if (snapshot.backupType === "recycle-bin") {
+      await this.deleteBackupDocument(id, snapshot);
+    } else {
+      await updateDoc(doc(firestore, "backups", id), {
+        recoveryMeta: {
+          ...(snapshot.recoveryMeta || { title: "Recovery snapshot" }),
+          restoredAt: Date.now(),
+          restoredBy: auth.currentUser?.uid || null,
+        },
+      });
+    }
+  }
+
+  async deleteBackup(schoolId?: string, id?: string): Promise<void> {
+    await this.requireFeature(schoolId, "backups");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "deleteBackup");
+    if (!id) return;
+    const existing = await this.getBackupDetails(scopedSchoolId, id);
+    if (!existing) return;
+    await this.deleteBackupDocument(id, existing);
+  }
+
+  async deleteAllBackups(schoolId?: string): Promise<void> {
+    await this.requireFeature(schoolId, "backups");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "deleteAllBackups");
+    const q = query(
+      collection(firestore, "backups"),
+      where("schoolId", "==", scopedSchoolId),
+    );
+    const snap = await getDocs(q);
+    const deletions = snap.docs.map((d) =>
+      this.deleteBackupDocument(d.id, d.data() as Partial<Backup>),
+    );
+    await Promise.all(deletions);
+  }
+
+  // --- Fees & Payments ---
+  async getFees(filters: {
+    schoolId?: string;
+    academicYear?: string;
+    term?: FeeTerm;
+    classId?: string | null;
+  }): Promise<FeeDefinition[]> {
+    await this.requireFeature(filters.schoolId, "fees_payments");
+    const scopedSchoolId = this.requireSchoolId(filters.schoolId, "getFees");
+    const conditions: any[] = [where("schoolId", "==", scopedSchoolId)];
+    if (filters.classId)
+      conditions.push(where("classId", "==", filters.classId));
+    const useV2 = await this.useFinanceV2(scopedSchoolId);
+    const feesCollection = useV2
+      ? collection(firestore, "schools", scopedSchoolId, "fees")
+      : collection(firestore, "fees");
+    const alternateFeesCollection = useV2
+      ? collection(firestore, "fees")
+      : collection(firestore, "schools", scopedSchoolId, "fees");
+    const readFeesFrom = async (targetCollection: ReturnType<typeof collection>) => {
+      const q = query(targetCollection, ...conditions);
+      const snap = await getDocs(q);
+      const rows = snap.docs.map((d) => ({
+        ...(d.data() as Omit<FeeDefinition, "id">),
+        id: d.id,
+      }));
+      if (!filters.academicYear && !filters.term) return rows;
+      return rows.filter((fee) => {
+        const frequency = fee.feeFrequency || "per_term";
+        if (frequency === "one_time") {
+          if (filters.academicYear && fee.academicYear !== filters.academicYear)
+            return false;
+          if (filters.term && fee.term !== filters.term) return false;
+          return true;
+        }
+        if (frequency === "per_year") {
+          if (
+            filters.academicYear &&
+            fee.applyToAcademicYear &&
+            fee.applyToAcademicYear !== fee.academicYear &&
+            fee.applyToAcademicYear !== filters.academicYear
+          ) {
+            return false;
+          }
+          return true;
+        }
+        if (
+          filters.term &&
+          fee.applyToTerm &&
+          fee.applyToTerm !== fee.term &&
+          fee.applyToTerm !== filters.term
+        ) {
+          return false;
+        }
+        return true;
+      });
+    };
+    try {
+      const primary = await readFeesFrom(feesCollection);
+      const alternate = await readFeesFrom(alternateFeesCollection);
+      const allFees = [...primary];
+      const existingIds = new Set(allFees.map((f) => f.id));
+      for (const fee of alternate) {
+        if (!existingIds.has(fee.id)) {
+          allFees.push(fee);
+        }
+      }
+      return allFees;
+    } catch (error) {
+      console.warn("[mockDb] getFees primary query failed, trying alternate", error);
+      return readFeesFrom(alternateFeesCollection).catch((alternateError) => {
+        console.warn("[mockDb] getFees alternate query failed, returning empty", alternateError);
+        return [];
+      });
+    }
+  }
+
+  async saveFee(fee: FeeDefinition): Promise<void> {
+    await this.requireFeature(fee.schoolId, "fees_payments");
+    this.requireSchoolId(fee.schoolId, "saveFee");
+    const useV2 = await this.useFinanceV2(fee.schoolId);
+    const docRef = useV2
+      ? doc(firestore, "schools", fee.schoolId, "fees", fee.id)
+      : doc(firestore, "fees", fee.id);
+    await setDoc(docRef, fee);
+  }
+
+  async deleteFee(feeId: string, schoolId?: string): Promise<void> {
+    await this.requireFeature(schoolId, "fees_payments");
+    if (!feeId) return;
+    const scopedSchoolId = this.requireSchoolId(schoolId, "deleteFee");
+    const scopedRef = doc(firestore, "schools", scopedSchoolId, "fees", feeId);
+    const rootRef = doc(firestore, "fees", feeId);
+    const [scopedSnap, rootSnapResult] = await Promise.all([
+      getDoc(scopedRef).catch(() => null),
+      getDoc(rootRef)
+        .then((snap) => ({ snap, denied: false }))
+        .catch((error) => {
+          if (this.isPermissionDeniedError(error)) {
+            return { snap: null, denied: true };
+          }
+          throw error;
+        }),
+    ]);
+    const rootSnap = rootSnapResult.snap;
+    const shouldDeleteScoped = Boolean(scopedSnap?.exists());
+    const shouldDeleteRoot =
+      Boolean(rootSnap?.exists()) &&
+      (rootSnap?.data() as Partial<FeeDefinition> | undefined)?.schoolId ===
+        scopedSchoolId;
+
+    if (!shouldDeleteScoped && !shouldDeleteRoot) return;
+
+    const batch = writeBatch(firestore);
+    if (shouldDeleteScoped) batch.delete(scopedRef);
+    if (shouldDeleteRoot) batch.delete(rootRef);
+    await batch.commit();
+    if (
+      rootSnap?.exists() &&
+      (rootSnap.data() as Partial<FeeDefinition>).schoolId !== scopedSchoolId
+    ) {
+      console.warn("[mockDb] Refused to delete fee from another school", feeId);
+    } else if (rootSnapResult.denied) {
+      console.debug("[mockDb] Skipped legacy fee delete: permission denied", feeId);
+    }
+  }
+
+  async getDailyFees(schoolId?: string): Promise<DailyFeeDefinition[]> {
+    await this.requireFeature(schoolId, "fees_payments");
+    const scopedSchoolId = this.requireSchoolId(schoolId, "getDailyFees");
+    const snap = await getDocs(
+      query(
+        collection(firestore, "schools", scopedSchoolId, "dailyFees"),
+        where("schoolId", "==", scopedSchoolId),
+      ),
+    );
+    return snap.docs.map((row) => ({
+      ...(row.data() as Omit<DailyFeeDefinition, "id">),
+      id: row.id,
+    }));
+  }
+
+  async saveDailyFee(fee: DailyFeeDefinition): Promise<void> {
+    await this.requireFeature(fee.schoolId, "fees_payments");
+    const schoolId = this.requireSchoolId(fee.schoolId, "saveDailyFee");
+    await setDoc(
+      doc(firestore, "schools", schoolId, "dailyFees", fee.id),
+      this.stripUndefinedDeep(fee),
+      { merge: true },
+    );
+  }
+
+  async getDailyCollections(filters: {
+    schoolId?: string;
+    date?: string;
+    classId?: string;
+  }): Promise<DailyCollectionRecord[]> {
+    await this.requireFeature(filters.schoolId, "fees_payments");
+    const schoolId = this.requireSchoolId(filters.schoolId, "getDailyCollections");
+    const constraints: QueryConstraint[] = [where("schoolId", "==", schoolId)];
+    if (filters.date) constraints.push(where("date", "==", filters.date));
+    if (filters.classId) constraints.push(where("classId", "==", filters.classId));
+    const snap = await getDocs(
+      query(collection(firestore, "schools", schoolId, "dailyCollections"), ...constraints),
+    );
+    return snap.docs.map((row) => ({
+      ...(row.data() as Omit<DailyCollectionRecord, "id">),
+      id: row.id,
+    }));
+  }
+
+  async saveDailyCollections(records: DailyCollectionRecord[]): Promise<void> {
+    if (!records.length) return;
+    const schoolId = this.requireSchoolId(records[0].schoolId, "saveDailyCollections");
+    await this.requireFeature(schoolId, "fees_payments");
+    if (records.some((record) => record.schoolId !== schoolId)) {
+      throw new Error("Daily collection batch cannot contain multiple schools.");
+    }
+    for (let offset = 0; offset < records.length; offset += 450) {
+      const batch = writeBatch(firestore);
+      records.slice(offset, offset + 450).forEach((record) => {
+        batch.set(
+          doc(firestore, "schools", schoolId, "dailyCollections", record.id),
+          this.stripUndefinedDeep(record),
+          { merge: true },
+        );
+      });
+      await batch.commit();
+    }
+  }
+
+  async getDailyCollectionBatches(filters: {
+    schoolId?: string;
+    teacherId?: string;
+    classId?: string;
+    date?: string;
+  }): Promise<DailyCollectionBatch[]> {
+    await this.requireFeature(filters.schoolId, "fees_payments");
+    const schoolId = this.requireSchoolId(filters.schoolId, "getDailyCollectionBatches");
+    const constraints: QueryConstraint[] = [where("schoolId", "==", schoolId)];
+    if (filters.teacherId) constraints.push(where("teacherId", "==", filters.teacherId));
+    if (filters.classId) constraints.push(where("classId", "==", filters.classId));
+    if (filters.date) constraints.push(where("date", "==", filters.date));
+    const snap = await getDocs(
+      query(collection(firestore, "schools", schoolId, "dailyCollectionBatches"), ...constraints),
+    );
+    return snap.docs.map((row) => ({
+      ...(row.data() as Omit<DailyCollectionBatch, "id">),
+      id: row.id,
+    }));
+  }
+
+  async saveDailyCollectionBatch(batch: DailyCollectionBatch): Promise<void> {
+    await this.requireFeature(batch.schoolId, "fees_payments");
+    const schoolId = this.requireSchoolId(batch.schoolId, "saveDailyCollectionBatch");
+    await setDoc(
+      doc(firestore, "schools", schoolId, "dailyCollectionBatches", batch.id),
+      this.stripUndefinedDeep(batch),
+      { merge: true },
+    );
+  }
+
+  async getStudentLedgers(filters: {
+    schoolId?: string;
+    academicYear?: string;
+    term?: FeeTerm;
+    classId?: string;
+    studentId?: string;
+  }): Promise<StudentFeeLedger[]> {
+    await this.requireFeature(filters.schoolId, "fees_payments");
+    const scopedSchoolId = this.requireSchoolId(
+      filters.schoolId,
+      "getStudentLedgers",
+    );
+    const conditions: any[] = [where("schoolId", "==", scopedSchoolId)];
+    if (filters.academicYear)
+      conditions.push(where("academicYear", "==", filters.academicYear));
+    if (filters.term) conditions.push(where("term", "==", filters.term));
+    if (filters.classId)
+      conditions.push(where("classId", "==", filters.classId));
+    if (filters.studentId)
+      conditions.push(where("studentId", "==", filters.studentId));
+    const useV2 = await this.useFinanceV2(scopedSchoolId);
+    const ledgerCollection = useV2
+      ? collection(firestore, "schools", scopedSchoolId, "feeLedgers")
+      : collection(firestore, "student_ledgers");
+    const alternateLedgerCollection = useV2
+      ? collection(firestore, "student_ledgers")
+      : collection(firestore, "schools", scopedSchoolId, "feeLedgers");
+    const readLedgersFrom = async (targetCollection: ReturnType<typeof collection>) => {
+      const q = query(targetCollection, ...conditions);
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => ({
+        ...(d.data() as Omit<StudentFeeLedger, "id">),
+        id: d.id,
+      }));
+    };
+    try {
+      const primary = await readLedgersFrom(ledgerCollection);
+      const alternate = await readLedgersFrom(alternateLedgerCollection);
+      const allLedgers = [...primary];
+      const existingIds = new Set(allLedgers.map((l) => l.id));
+      for (const ledger of alternate) {
+        if (!existingIds.has(ledger.id)) {
+          allLedgers.push(ledger);
+        }
+      }
+      return allLedgers;
+    } catch (error) {
+      console.warn("[mockDb] getStudentLedgers primary query failed, trying alternate", error);
+      return readLedgersFrom(alternateLedgerCollection).catch((alternateError) => {
+        console.warn("[mockDb] getStudentLedgers alternate query failed, returning empty", alternateError);
+        return [];
+      });
+    }
+  }
+
+  async upsertStudentLedger(ledger: StudentFeeLedger): Promise<void> {
+    await this.requireFeature(ledger.schoolId, "fees_payments");
+    this.requireSchoolId(ledger.schoolId, "upsertStudentLedger");
+    const cleanedLedger = this.stripUndefinedDeep(ledger);
+    const useV2 = await this.useFinanceV2(ledger.schoolId);
+    const docRef = useV2
+      ? doc(firestore, "schools", ledger.schoolId, "feeLedgers", ledger.id)
+      : doc(firestore, "student_ledgers", ledger.id);
+    const preparedLedger = useV2 && !("createdAt" in cleanedLedger) ? { ...cleanedLedger, createdAt: serverTimestamp() } : cleanedLedger;
+    await setDoc(docRef, preparedLedger, {
+      merge: true,
+    });
+  }
+);
+  } : cleanedLedger;    await setDoc(docRef, preparedLedger, {      merge: true,    }););
+  }
+
+  async upsertStudentLedgersBulk(ledgers: StudentFeeLedger[]): Promise<void> {
+    if (!ledgers.length) return;
+    const schoolId = ledgers[0].schoolId;
+    await this.requireFeature(schoolId, "fees_payments");
+    this.requireSchoolId(schoolId, "upsertStudentLedgersBulk");
+    const useV2 = await this.useFinanceV2(schoolId);
+    const collectionPath = useV2
+      ? ["schools", schoolId, "feeLedgers"] as string[]
+      : ["student_ledgers"];
+    const operations = ledgers
+      .filter(Boolean)
+      .map((ledger) => (batch: ReturnType<typeof writeBatch>) => {
+        const ref = useV2 ? doc(firestore, `schools/${schoolId}/feeLedgers/${ledger.id}`) : doc(firestore, `student_ledgers/${ledger.id}`);
+        const preparedLedger = useV2 && !("createdAt" in ledger) ? { ...ledger, createdAt: serverTimestamp() } : ledger;
+        batch.set(ref, preparedLedger, { merge: true });
+      });
+    await this.commitChunkedOperations(operations);
+  }
+);
+    await this.commitChunkedOperations(operations);
+  }/feeLedgers/${ledger.id}`) : doc(firestore, `student_ledgers/${ledger.id}`);
+        batch.set(ref, this.stripUndefinedDeep(ledger), { merge: true });
+      });
+    await this.commitChunkedOperations(operations);
+  }
+
+  async getPayments(filters: {
+    schoolId?: string;
+    academicYear?: string;
+    term?: FeeTerm;
+    classId?: string;
+    studentId?: string;
+  }): Promise<StudentFeePayment[]> {
+    await this.requireFeature(filters.schoolId, "fees_payments");
+    const scopedSchoolId = this.requireSchoolId(
+      filters.schoolId,
+      "getPayments",
+    );
+    const conditions: any[] = [where("schoolId", "==", scopedSchoolId)];
+    if (filters.academicYear)
+      conditions.push(where("academicYear", "==", filters.academicYear));
+    if (filters.term) conditions.push(where("term", "==", filters.term));
+    if (filters.classId)
+      conditions.push(where("classId", "==", filters.classId));
+    if (filters.studentId)
+      conditions.push(where("studentId", "==", filters.studentId));
+    const useV2 = await this.useFinanceV2(scopedSchoolId);
+    const paymentsCollection = useV2
+      ? collection(firestore, "schools", scopedSchoolId, "payments")
+      : collection(firestore, "payments");
+    const alternatePaymentsCollection = useV2
+      ? collection(firestore, "payments")
+      : collection(firestore, "schools", scopedSchoolId, "payments");
+    const readPaymentsFrom = async (targetCollection: ReturnType<typeof collection>) => {
+      const q = query(targetCollection, ...conditions);
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => ({
+        ...(d.data() as Omit<StudentFeePayment, "id">),
+        id: d.id,
+      }));
+    };
+    try {
+      const primary = await readPaymentsFrom(paymentsCollection);
+      const alternate = await readPaymentsFrom(alternatePaymentsCollection);
+      const allPayments = [...primary];
+      const existingIds = new Set(allPayments.map((p) => p.id));
+      for (const payment of alternate) {
+        if (!existingIds.has(payment.id)) {
+          allPayments.push(payment);
+        }
+      }
+      return allPayments;
+    } catch (error) {
+      console.warn("[mockDb] getPayments primary query failed, trying alternate", error);
+      return readPaymentsFrom(alternatePaymentsCollection).catch((alternateError) => {
+        console.warn("[mockDb] getPayments alternate query failed, returning empty", alternateError);
+        return [];
+      });
+    }
+  }
+
+  async recordStudentPayment(payment: StudentFeePayment): Promise<void> {
+    console.log("[recordStudentPayment] Starting...", payment);
+    await this.requireFeature(payment.schoolId, "fees_payments");
+    this.requireSchoolId(payment.schoolId, "recordStudentPayment");
+    
+    const id = payment.id || payment.receiptNumber || `PAY-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const finalPayment = { ...payment, id };
+    
+    const useV2 = await this.useFinanceV2(payment.schoolId);
+    console.log("[recordStudentPayment] ID:", id, "useV2:", useV2, "schoolId:", payment.schoolId);
+    
+    const docRef = useV2
+      ? doc(firestore, "schools", payment.schoolId, "payments", id)
+      : doc(firestore, "payments", id);
+    
+    console.log("[recordStudentPayment] Attempting setDoc to:", docRef.path);
+    const preparedPayment = useV2 && !("createdAt" in finalPayment) ? { ...finalPayment, createdAt: serverTimestamp() } : finalPayment;
+    await setDoc(docRef, preparedPayment);
+    console.log("[recordStudentPayment] Success!");
+  }
+-${Math.random().toString(36).slice(2, 7)}`;
+    const finalPayment = { ...payment, id };
+    
+    const useV2 = await this.useFinanceV2(payment.schoolId);
+    console.log("[recordStudentPayment] ID:", id, "useV2:", useV2, "schoolId:", payment.schoolId);
+    
+    const docRef = useV2
+      ? doc(firestore, "schools", payment.schoolId, "payments", id)
+      : doc(firestore, "payments", id);
+      
+    console.log("[recordStudentPayment] Attempting setDoc to:", docRef.path);
+    await setDoc(docRef, finalPayment);
+    console.log("[recordStudentPayment] Success!");
+  }
+
+  async updateStudentPayment(
+    paymentId: string,
+    updates: Partial<StudentFeePayment>,
+    schoolId?: string,
+  ): Promise<void> {
+    await this.requireFeature(schoolId, "fees_payments");
+    if (!paymentId) return;
+    if (schoolId && (await this.useFinanceV2(schoolId))) {
+      const scopedRef = doc(firestore, "schools", schoolId, "payments", paymentId);
+      const rootRef = doc(firestore, "payments", paymentId);
+      await setDoc(scopedRef, updates, { merge: true });
+      await setDoc(rootRef, { ...updates, schoolId }, { merge: true }).catch(() => {});
+      return;
+    }
+    await updateDoc(doc(firestore, "payments", paymentId), updates);
+  }
+
+  async markStudentPaymentReviewed(
+    paymentId: string,
+    schoolId: string,
+    reviewedBy: string,
+  ): Promise<void> {
+    await this.requireFeature(schoolId, "admin_dashboard");
+    if (!paymentId) return;
+
+    const updates: Partial<StudentFeePayment> = {
+      adminReviewedAt: Date.now(),
+      adminReviewedBy: reviewedBy,
+    };
+
+    const scopedRef = doc(firestore, "schools", schoolId, "payments", paymentId);
+    const rootRef = doc(firestore, "payments", paymentId);
+    const [scopedSnap, rootSnap] = await Promise.all([
+      getDoc(scopedRef).catch(() => null),
+      getDoc(rootRef).catch(() => null),
+    ]);
+    const hasScopedPayment = Boolean(scopedSnap?.exists());
+    const hasRootPayment = Boolean(rootSnap?.exists());
+
+    if (hasScopedPayment || hasRootPayment) {
+      const batch = writeBatch(firestore);
+      if (hasScopedPayment) batch.set(scopedRef, updates, { merge: true });
+      if (hasRootPayment) {
+        batch.set(rootRef, { ...updates, schoolId }, { merge: true });
+      }
+      await batch.commit();
+      return;
+    }
+
+    if (await this.useFinanceV2(schoolId)) {
+      await setDoc(scopedRef, { ...updates, schoolId }, { merge: true });
+      return;
+    }
+
+    await updateDoc(rootRef, updates);
+  }
+
+  async computeLedgerTotals(
+    ledger: StudentFeeLedger,
+    payments: StudentFeePayment[],
+  ): Promise<{
+    totalDue: number;
+    totalPaid: number;
+    balance: number;
+    status: "Unpaid" | "Part-paid" | "Paid";
+  }> {
+    const totalDue = ledger.fees.reduce((sum, fee) => sum + fee.amount, 0);
+    const openingPaid = ledger.openingPaidAmount || 0;
+    const totalPaid = payments
+      .filter(
+        (payment) =>
+          payment.studentId === ledger.studentId &&
+          payment.academicYear === ledger.academicYear &&
+          payment.term === ledger.term,
+      )
+      .reduce((sum, payment) => sum + payment.amountPaid, 0);
+    const totalPaidIncludingOpening = openingPaid + totalPaid;
+    const balance = Math.max(0, totalDue - totalPaidIncludingOpening);
+    const status =
+      totalPaidIncludingOpening <= 0
+        ? "Unpaid"
+        : balance > 0
+          ? "Part-paid"
+          : "Paid";
+    return { totalDue, totalPaid: totalPaidIncludingOpening, balance, status };
+  }
+
+  async getPublicSchools(): Promise<Array<{ id: string; name: string; logoUrl: string }>> {
+    try {
+      // Fetch schools from the main collection
+      const q = query(
+        collection(firestore, "schools"),
+        limit(24)
+      );
+      const snap = await getDocs(q);
+      const schools = snap.docs.map((docSnap) => ({ 
+        id: docSnap.id, 
+        ...(docSnap.data() as any) 
+      }));
+
+      // Filter for those with logos and map to standard format
+      return schools
+        .filter((s) => s.logoUrl && s.logoUrl.length > 0)
+        .map((s) => ({ 
+          id: s.id, 
+          name: s.name || s.schoolName || "Partner School", 
+          logoUrl: s.logoUrl 
+        }));
+    } catch (error) {
+      console.error("Failed to fetch public schools:", error);
+      return [];
+    }
+  }
+
+  async updateUserProfilePhoto(uid: string, photoUrl: string): Promise<void> {
+    if (!uid) return;
+    await setDoc(doc(firestore, "users", uid), { photoUrl }, { merge: true });
+  }
+
+  async updateStudentPhoto(studentId: string, photoUrl: string): Promise<void> {
+    if (!studentId) return;
+    await updateDoc(doc(firestore, "students", studentId), { photoUrl });
+  }
+}
+
+export const db = new FirestoreService();
+
+
+
+
+
+
+
+

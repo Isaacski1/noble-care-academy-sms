@@ -15,7 +15,7 @@ import {
   orderBy,
   limit,
   startAfter,
-  QueryConstraint,
+  QueryConstraint, serverTimestamp, Timestamp,
 } from "firebase/firestore";
 import {
   User,
@@ -723,7 +723,7 @@ class FirestoreService {
     }
   }
 
-  private async createSnapshotRecord(params: {
+private async createSnapshotRecord(params: {
     schoolId: string;
     backupType: BackupType;
     title?: string;
@@ -741,45 +741,86 @@ class FirestoreService {
     term?: string;
     academicYear?: string;
     schoolName?: string;
-  }): Promise<Backup> {
+}): Promise<Backup> {
     const context =
-      params.term && params.academicYear && params.schoolName !== undefined
-        ? {
-            term: params.term,
-            academicYear: params.academicYear,
-            schoolName: params.schoolName,
-          }
-        : await this.getSchoolRecoveryContext(params.schoolId);
+        params.term && params.academicYear && params.schoolName !== undefined
+            ? {
+                term: params.term,
+                academicYear: params.academicYear,
+                schoolName: params.schoolName,
+            }
+            : await this.getSchoolRecoveryContext(params.schoolId);
 
+    // Generate backup id
+    const backupId = this.generateBackupId("backup");
+    // Reference to the data subcollection
+    const dataSubcol = collection(firestore, "backups", backupId, "data");
+
+    // Prepare data to store in subcollection (break down params.data into known collections)
+    const dataCollections = [
+        { name: "schoolConfig", value: params.data?.schoolConfig },
+        { name: "schoolSettings", value: params.data?.schoolSettings },
+        { name: "schoolProfile", value: params.data?.schoolProfile },
+        { name: "students", value: params.data?.students },
+        { name: "attendanceRecords", value: params.data?.attendanceRecords },
+        { name: "teacherAttendanceRecords", value: params.data?.teacherAttendanceRecords },
+        { name: "assessments", value: params.data?.assessments },
+        { name: "studentRemarks", value: params.data?.studentRemarks },
+        { name: "adminRemarks", value: params.data?.adminRemarks },
+        { name: "studentSkills", value: params.data?.studentSkills },
+        { name: "timetables", value: params.data?.timetables },
+        { name: "users", value: params.data?.users },
+        { name: "classSubjects", value: params.data?.classSubjects },
+        { name: "notices", value: params.data?.notices },
+        { name: "adminNotifications", value: params.data?.adminNotifications },
+        { name: "activityLogs", value: params.data?.activityLogs },
+        { name: "payments", value: params.data?.payments },
+        { name: "billingPayments", value: params.data?.billingPayments },
+        { name: "fees", value: params.data?.fees },
+        { name: "studentLedgers", value: params.data?.studentLedgers },
+        { name: "financeSettings", value: params.data?.financeSettings },
+    ];
+
+    // Filter out any collections that are undefined (so we don't write empty documents)
+    const filteredDataCollections = dataCollections.filter(({ value }) => value !== undefined);
+
+    // Write each collection to a document in the data subcollection
+    const dataWritePromises = filteredDataCollections.map(({ name, value }) =>
+        setDoc(doc(dataSubcol, name), { items: value })
+    );
+    await Promise.all(dataWritePromises);
+
+    // Now create the backup document (without the large data)
     const backup = this.stripUndefinedDeep<Backup>({
-      id: this.generateBackupId("backup"),
-      schoolId: params.schoolId,
-      schoolName: params.schoolName ?? context.schoolName,
-      timestamp: Date.now(),
-      term: params.term ?? context.term,
-      academicYear: params.academicYear ?? context.academicYear,
-      backupType: params.backupType,
-      dedupeKey: params.dedupeKey,
-      recoveryMeta: this.isFullBackupType(params.backupType)
-        ? undefined
-        : {
-            title: params.title || "Recovery snapshot",
-            description: params.description,
-            sourceAction: params.sourceAction,
-            sourceModule: params.sourceModule,
-            entityType: params.entityType,
-            entityId: params.entityId,
-            entityLabel: params.entityLabel,
-            recordCount: params.recordCount,
-            collections: params.collections,
-            expiresAt: params.expiresAt ?? null,
-          },
-      data: params.data,
+        id: backupId,
+        schoolId: params.schoolId,
+        schoolName: params.schoolName ?? context.schoolName,
+        timestamp: Date.now(),
+        term: params.term ?? context.term,
+        academicYear: params.academicYear ?? context.academicYear,
+        backupType: params.backupType,
+        dedupeKey: params.dedupeKey,
+        dataCollectionRef: `backups/${backupId}/data`,
+        // Note: data field is omitted intentionally as it's stored in subcollection
+        recoveryMeta: this.isFullBackupType(params.backupType)
+            ? undefined
+            : {
+                title: params.title || "Recovery snapshot",
+                description: params.description,
+                sourceAction: params.sourceAction,
+                sourceModule: params.sourceModule,
+                entityType: params.entityType,
+                entityId: params.entityId,
+                entityLabel: params.entityLabel,
+                recordCount: params.recordCount,
+                collections: params.collections,
+                expiresAt: params.expiresAt ?? null,
+            },
     });
 
     await setDoc(doc(firestore, "backups", backup.id), backup);
     return backup;
-  }
+}
 
   private async createRecoveryPoint(params: {
     schoolId: string;
@@ -3177,42 +3218,59 @@ class FirestoreService {
         : undefined;
       schoolProfile = await this.getSchoolProfileSnapshot(schoolId);
 
-      const backup = this.stripUndefinedDeep<Backup>({
-        id: this.generateBackupId("backup"),
-        schoolId,
-        schoolName:
-          currentConfig.schoolName || schoolSettings?.schoolName || "",
-        timestamp: Date.now(),
-        term: currentTerm,
-        academicYear: academicYear,
-        backupType,
-        dedupeKey,
-        data: {
-          schoolConfig: currentConfig,
-          schoolSettings,
-          schoolProfile,
-          students,
-          attendanceRecords,
-          teacherAttendanceRecords,
-          assessments,
-          studentRemarks,
-          adminRemarks,
-          studentSkills,
-          timetables,
-          users,
-          classSubjects,
-          notices,
-          adminNotifications,
-          activityLogs,
-          payments: financePayments,
-          billingPayments,
-          fees,
-          studentLedgers,
-          financeSettings,
-        },
-      });
+// Generate backup id
+       const backupId = this.generateBackupId("backup");
 
-      await setDoc(doc(firestore, "backups", backup.id), backup);
+       // Reference to the data subcollection
+       const dataSubcol = collection(firestore, "backups", backupId, "data");
+
+       // Prepare data to store in subcollection
+       const dataCollections = [
+         { name: "schoolConfig", value: currentConfig },
+         { name: "schoolSettings", value: schoolSettings },
+         { name: "schoolProfile", value: schoolProfile },
+         { name: "students", value: students },
+         { name: "attendanceRecords", value: attendanceRecords },
+         { name: "teacherAttendanceRecords", value: teacherAttendanceRecords },
+         { name: "assessments", value: assessments },
+         { name: "studentRemarks", value: studentRemarks },
+         { name: "adminRemarks", value: adminRemarks },
+         { name: "studentSkills", value: studentSkills },
+         { name: "timetables", value: timetables },
+         { name: "users", value: users },
+         { name: "classSubjects", value: classSubjects },
+         { name: "notices", value: notices },
+         { name: "adminNotifications", value: adminNotifications },
+         { name: "activityLogs", value: activityLogs },
+         { name: "payments", value: financePayments },
+         { name: "billingPayments", value: billingPayments },
+         { name: "fees", value: fees },
+         { name: "studentLedgers", value: studentLedgers },
+         { name: "financeSettings", value: financeSettings },
+       ];
+
+       // Write each collection to a document in the data subcollection
+       const dataWritePromises = dataCollections.map(({ name, value }) =>
+         setDoc(doc(dataSubcol, name), { items: value })
+       );
+       await Promise.all(dataWritePromises);
+
+       // Now create the backup document (without the large data)
+       const backup = this.stripUndefinedDeep<Backup>({
+         id: backupId,
+         schoolId,
+         schoolName:
+           currentConfig.schoolName || schoolSettings?.schoolName || "",
+         timestamp: Date.now(),
+         term: currentTerm,
+         academicYear: academicYear,
+         backupType,
+         dedupeKey,
+         dataCollectionRef: `backups/${backupId}/data`,
+         // Note: data field is omitted intentionally as it's stored in subcollection
+       });
+
+       await setDoc(doc(firestore, "backups", backup.id), backup);
       console.log(`Backup created successfully: ${backup.id}`);
 
       await logActivity({
@@ -4204,38 +4262,67 @@ class FirestoreService {
     }
   }
 
-  async upsertStudentLedger(ledger: StudentFeeLedger): Promise<void> {
-    await this.requireFeature(ledger.schoolId, "fees_payments");
-    this.requireSchoolId(ledger.schoolId, "upsertStudentLedger");
-    const cleanedLedger = this.stripUndefinedDeep(ledger);
-    const useV2 = await this.useFinanceV2(ledger.schoolId);
-    const docRef = useV2
-      ? doc(firestore, "schools", ledger.schoolId, "feeLedgers", ledger.id)
-      : doc(firestore, "student_ledgers", ledger.id);
-    await setDoc(docRef, cleanedLedger, {
-      merge: true,
-    });
-  }
+async upsertStudentLedger(ledger: StudentFeeLedger): Promise<void> {
+     await this.requireFeature(ledger.schoolId, "fees_payments");
+     this.requireSchoolId(ledger.schoolId, "upsertStudentLedger");
+     const cleanedLedger = this.stripUndefinedDeep(ledger);
+     const useV2 = await this.useFinanceV2(ledger.schoolId);
+     const docRef = useV2
+       ? doc(firestore, "schools", ledger.schoolId, "feeLedgers", ledger.id)
+       : doc(firestore, "student_ledgers", ledger.id);
+     const docSnap = await getDoc(docRef);
+     if (docSnap.exists()) {
+       // Existing document: do not overwrite createdAt
+       const { createdAt, ...dataToSet } = cleanedLedger;
+       await setDoc(docRef, dataToSet, { merge: true });
+     } else {
+       // New document: use the cleaned ledger as is (which includes caller-provided createdAt)
+       await setDoc(docRef, cleanedLedger, { merge: true });
+     }
+   }
 
-  async upsertStudentLedgersBulk(ledgers: StudentFeeLedger[]): Promise<void> {
-    if (!ledgers.length) return;
-    const schoolId = ledgers[0].schoolId;
-    await this.requireFeature(schoolId, "fees_payments");
-    this.requireSchoolId(schoolId, "upsertStudentLedgersBulk");
-    const useV2 = await this.useFinanceV2(schoolId);
-    const collectionPath = useV2
-      ? ["schools", schoolId, "feeLedgers"] as string[]
-      : ["student_ledgers"];
-    const operations = ledgers
-      .filter(Boolean)
-      .map((ledger) => (batch: ReturnType<typeof writeBatch>) => {
-        const ref = useV2
-          ? doc(firestore, ...collectionPath, ledger.id)
-          : doc(firestore, collectionPath[0], ledger.id);
-        batch.set(ref, this.stripUndefinedDeep(ledger), { merge: true });
-      });
-    await this.commitChunkedOperations(operations);
-  }
+
+async upsertStudentLedgersBulk(ledgers: StudentFeeLedger[]): Promise<void> {
+     if (!ledgers.length) return;
+     const schoolId = ledgers[0].schoolId;
+     await this.requireFeature(schoolId, "fees_payments");
+     this.requireSchoolId(schoolId, "upsertStudentLedgersBulk");
+     const useV2 = await this.useFinanceV2(schoolId);
+     const collectionPath = useV2
+       ? ["schools", schoolId, "feeLedgers"] as string[]
+       : ["student_ledgers"];
+
+     const ledgerRefs = ledgers
+       .filter(Boolean)
+       .map((ledger) => {
+         const ref = useV2
+           ? doc(firestore, `schools/${schoolId}/feeLedgers/${ledger.id}`)
+           : doc(firestore, `student_ledgers/${ledger.id}`);
+         return { ledger, ref };
+       });
+
+     // Get existence for all ledger references
+     const existsPromises = ledgerRefs.map(({ ref }) => getDoc(ref));
+     const existsResults = await Promise.all(existsPromises);
+
+     // Build batch operations
+     const batchOps: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+     ledgerRefs.forEach(({ ledger, ref }, index) => {
+       const exists = existsResults[index].exists();
+       const cleanedLedger = this.stripUndefinedDeep(ledger);
+       if (exists) {
+         // Existing document: do not overwrite createdAt
+         const { createdAt, ...dataToSet } = cleanedLedger;
+         batchOps.push((batch) => batch.set(ref, dataToSet, { merge: true }));
+       } else {
+         // New document: use the cleaned ledger as is
+         batchOps.push((batch) => batch.set(ref, cleanedLedger, { merge: true }));
+       }
+     });
+
+     await this.commitChunkedOperations(batchOps);
+   }
+
 
   async getPayments(filters: {
     schoolId?: string;
@@ -4292,42 +4379,53 @@ class FirestoreService {
     }
   }
 
-  async recordStudentPayment(payment: StudentFeePayment): Promise<void> {
-    console.log("[recordStudentPayment] Starting...", payment);
-    await this.requireFeature(payment.schoolId, "fees_payments");
-    this.requireSchoolId(payment.schoolId, "recordStudentPayment");
-    
-    const id = payment.id || payment.receiptNumber || `PAY-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const finalPayment = { ...payment, id };
-    
-    const useV2 = await this.useFinanceV2(payment.schoolId);
-    console.log("[recordStudentPayment] ID:", id, "useV2:", useV2, "schoolId:", payment.schoolId);
-    
-    const docRef = useV2
-      ? doc(firestore, "schools", payment.schoolId, "payments", id)
-      : doc(firestore, "payments", id);
-      
-    console.log("[recordStudentPayment] Attempting setDoc to:", docRef.path);
-    await setDoc(docRef, finalPayment);
-    console.log("[recordStudentPayment] Success!");
-  }
+async recordStudentPayment(payment: StudentFeePayment): Promise<void> {
+     console.log("[recordStudentPayment] Starting...", payment);
+     await this.requireFeature(payment.schoolId, "fees_payments");
+     this.requireSchoolId(payment.schoolId, "recordStudentPayment");
+     
+     const id = payment.id || payment.receiptNumber || `PAY-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+     const finalPayment = { ...payment, id };
+     
+     const useV2 = await this.useFinanceV2(payment.schoolId);
+     console.log("[recordStudentPayment] ID:", id, "useV2:", useV2, "schoolId:", payment.schoolId);
+     
+     const docRef = useV2
+       ? doc(firestore, "schools", payment.schoolId, "payments", id)
+       : doc(firestore, "payments", id);
+     
+     console.log("[recordStudentPayment] Attempting setDoc to:", docRef.path);
+     const docSnap = await getDoc(docRef);
+     if (docSnap.exists()) {
+       // Existing payment: do not overwrite createdAt
+       const { createdAt, ...dataToSet } = this.stripUndefinedDeep(finalPayment);
+       await setDoc(docRef, dataToSet, { merge: true });
+     } else {
+       // New payment: use the cleaned finalPayment as is
+       await setDoc(docRef, this.stripUndefinedDeep(finalPayment), { merge: true });
+     }
+     console.log("[recordStudentPayment] Success!");
+   }
 
-  async updateStudentPayment(
-    paymentId: string,
-    updates: Partial<StudentFeePayment>,
-    schoolId?: string,
-  ): Promise<void> {
-    await this.requireFeature(schoolId, "fees_payments");
-    if (!paymentId) return;
-    if (schoolId && (await this.useFinanceV2(schoolId))) {
-      const scopedRef = doc(firestore, "schools", schoolId, "payments", paymentId);
-      const rootRef = doc(firestore, "payments", paymentId);
-      await setDoc(scopedRef, updates, { merge: true });
-      await setDoc(rootRef, { ...updates, schoolId }, { merge: true }).catch(() => {});
-      return;
-    }
-    await updateDoc(doc(firestore, "payments", paymentId), updates);
-  }
+
+async updateStudentPayment(
+     paymentId: string,
+     updates: Partial<StudentFeePayment>,
+     schoolId?: string,
+   ): Promise<void> {
+     await this.requireFeature(schoolId, "fees_payments");
+     if (!paymentId) return;
+     // Remove createdAt from updates to prevent mutation
+     const { createdAt, ...safeUpdates } = updates;
+     if (schoolId && (await this.useFinanceV2(schoolId))) {
+       const scopedRef = doc(firestore, "schools", schoolId, "payments", paymentId);
+       const rootRef = doc(firestore, "payments", paymentId);
+       await setDoc(scopedRef, safeUpdates, { merge: true });
+       await setDoc(rootRef, { ...safeUpdates, schoolId }, { merge: true }).catch(() => {});
+       return;
+     }
+     await updateDoc(doc(firestore, "payments", paymentId), safeUpdates);
+   }
 
   async markStudentPaymentReviewed(
     paymentId: string,

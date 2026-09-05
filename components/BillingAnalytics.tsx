@@ -26,6 +26,7 @@ import {
   AnalyticsData,
   calculateAnalyticsData,
 } from "../services/billingAnalytics";
+import * as XLSX from "xlsx";
 
 interface BillingAnalyticsProps {
   className?: string;
@@ -155,31 +156,113 @@ const BillingAnalytics: React.FC<BillingAnalyticsProps> = ({
     }).format(amount);
   };
 
-  // Export to CSV
-  const exportToCSV = () => {
+  // Export to Excel
+  const exportToExcel = () => {
     const headers = ["Date", "Revenue", "Payment Count"];
     const rows = analyticsData.timeSeriesData.map((item) => [
       item.date,
-      item.revenue.toFixed(2),
-      item.count.toString(),
+      parseFloat(item.revenue.toFixed(2)),
+      parseInt(item.count.toString()),
     ]);
 
-    const csvContent = [headers, ...rows]
-      .map((row) => row.map((cell) => `"${cell}"`).join(","))
-      .join("\n");
+    // Create workbook
+    const wb = XLSX.utils.book_new();
 
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute(
-      "download",
-      `billing-analytics-${timeRange}-${new Date().toISOString().split("T")[0]}.csv`,
+    // Prepare data for worksheet
+    const data = [headers, ...rows];
+
+    // Create worksheet
+    const ws = XLSX.utils.aoa_to_sheet(data);
+
+    // Style header row
+    const headerStyle = {
+      font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 },
+      fill: { fgColor: { rgb: "1E40AF" }, patternType: "solid" },
+      alignment: { horizontal: "center", vertical: "center", wrapText: true },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } },
+      },
+    };
+
+    // Apply header style to all header cells
+    for (let i = 0; i < headers.length; i++) {
+      const cellRef = XLSX.utils.encode_cell({ r: 0, c: i });
+      if (ws[cellRef]) {
+        ws[cellRef].s = headerStyle;
+      }
+    }
+
+    // Style data rows
+    const dataStyle = {
+      font: { sz: 10 },
+      alignment: { horizontal: "left", vertical: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "D1D5DB" } },
+        bottom: { style: "thin", color: { rgb: "D1D5DB" } },
+        left: { style: "thin", color: { rgb: "D1D5DB" } },
+        right: { style: "thin", color: { rgb: "D1D5DB" } },
+      },
+    };
+
+    const numberStyle = {
+      font: { sz: 10 },
+      alignment: { horizontal: "right", vertical: "center" },
+      numFormat: "#,##0.00",
+      border: {
+        top: { style: "thin", color: { rgb: "D1D5DB" } },
+        bottom: { style: "thin", color: { rgb: "D1D5DB" } },
+        left: { style: "thin", color: { rgb: "D1D5DB" } },
+        right: { style: "thin", color: { rgb: "D1D5DB" } },
+      },
+    };
+
+    // Apply data style to all data cells
+    for (let r = 1; r < data.length; r++) {
+      for (let c = 0; c < headers.length; c++) {
+        const cellRef = XLSX.utils.encode_cell({ r, c });
+        if (ws[cellRef]) {
+          if (c === 0) {
+            // Date column - left aligned
+            ws[cellRef].s = dataStyle;
+          } else {
+            // Revenue and Payment Count columns - right aligned
+            ws[cellRef].s = numberStyle;
+          }
+        }
+      }
+    }
+
+    // Set column widths
+    const colWidths = headers.map((header, index) => {
+      let maxWidth = header.length;
+      for (let r = 0; r < data.length; r++) {
+        const cellValue = data[r]?.[index];
+        if (cellValue !== null && cellValue !== undefined) {
+          const cellStr = String(cellValue);
+          if (cellStr.length > maxWidth) {
+            maxWidth = cellStr.length;
+          }
+        }
+      }
+      return { wch: Math.min(maxWidth + 4, 50) };
+    });
+    ws["!cols"] = colWidths;
+
+    // Freeze header row
+    ws["!freeze"] = { xSplit: 0, ySplit: 1, activeCell: "A2" };
+
+    // Add worksheet to workbook
+    XLSX.utils.book_append_sheet(wb, ws, "Billing Analytics");
+
+    // Generate Excel file
+    XLSX.writeFile(
+      wb,
+      `billing-analytics-${timeRange}-${new Date().toISOString().split("T")[0]}.xlsx`,
+      { bookType: "xlsx" }
     );
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
   };
 
   // Loading state

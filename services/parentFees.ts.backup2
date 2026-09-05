@@ -1,0 +1,332 @@
+import {
+  FeeTerm,
+  StudentFeeLedger,
+  StudentFeePayment,
+} from "../types";
+
+export type ParentFeeTermFilter = FeeTerm | "all";
+
+export type EnrichedParentFee = StudentFeeLedger["fees"][number] & {
+  actualPaid: number;
+  actualBalance: number;
+  actualStatus: "Paid" | "Part-paid" | "Unpaid";
+};
+
+export type EnrichedParentLedger = Omit<StudentFeeLedger, "fees"> & {
+  fees: EnrichedParentFee[];
+  actualTotalDue: number;
+  actualTotalPaid: number;
+  actualBalance: number;
+  actualStatus: "Paid" | "Part-paid" | "Unpaid";
+};
+
+export type ParentFeeTotals = {
+  totalFees: number;
+  totalPaid: number;
+  totalBalance: number;
+};
+
+const isAdmissionFee = (feeName?: string) =>
+  String(feeName || "").trim().toLowerCase().includes("admission");
+
+const shouldHidePaidAdmissionFee = (fee: {
+  feeName: string;
+  actualBalance?: number;
+}) => isAdmissionFee(fee.feeName) && (fee.actualBalance || 0) <= 0;
+
+export const normalizeParentFeeTerm = (value?: string | null) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "1" || normalized === "term1" || normalized === "term 1") return "Term 1";
+  if (normalized === "2" || normalized === "term2" || normalized === "term 2") return "Term 2";
+  if (normalized === "3" || normalized === "term3" || normalized === "term 3") return "Term 3";
+  return value || "";
+};
+
+export const enrichParentFeeLedgers = (
+  ledgers: StudentFeeLedger[],
+  payments: StudentFeePayment[],
+  selectedTerm: ParentFeeTermFilter,
+): EnrichedParentLedger[] => {
+  const termLedgers =
+    selectedTerm === "all"
+      ? ledgers
+      : ledgers.filter((ledger) => ledger.term === selectedTerm);
+
+  return termLedgers.map((ledger) => {
+    let ledgerTotalDue = 0;
+    let ledgerTotalPaid = 0;
+
+    const enrichedFees = ledger.fees.map((fee) => {
+      const feePayments = payments.filter(
+        (payment) =>
+          payment.studentId === ledger.studentId &&
+          payment.academicYear === ledger.academicYear &&
+          normalizeParentFeeTerm(payment.term) === ledger.term &&
+          payment.feeId === fee.feeId,
+      );
+      const paidSinceOnboarding = feePayments.reduce(
+        (sum, payment) => sum + payment.amountPaid,
+        0,
+      );
+      const totalPaidForFee =
+        (fee.openingPaidAmount || 0) + paidSinceOnboarding;
+      const balanceForFee = Math.max(0, fee.amount - totalPaidForFee);
+
+      let statusForFee = fee.openingStatus || "Unpaid";
+      if (totalPaidForFee > 0) {
+        statusForFee = balanceForFee <= 0 ? "Paid" : "Part-paid";
+      }
+
+      return {
+        ...fee,
+        actualPaid: totalPaidForFee,
+        actualBalance: balanceForFee,
+        actualStatus: statusForFee,
+      };
+    });
+
+    const visibleFees = enrichedFees.filter(
+      (fee) => !shouldHidePaidAdmissionFee(fee),
+    );
+
+    visibleFees.forEach((fee) => {
+      ledgerTotalDue += fee.amount;
+      ledgerTotalPaid += fee.actualPaid || 0;
+    });
+
+    const ledgerBalance = Math.max(0, ledgerTotalDue - ledgerTotalPaid);
+    let ledgerStatus = ledger.openingStatus || "Unpaid";
+    if (ledgerTotalPaid > 0) {
+      ledgerStatus = ledgerBalance <= 0 ? "Paid" : "Part-paid";
+    }
+
+    return {
+      ...ledger,
+      fees: visibleFees,
+      actualTotalDue: ledgerTotalDue,
+      actualTotalPaid: ledgerTotalPaid,
+      actualBalance: ledgerBalance,
+      actualStatus: ledgerStatus,
+    };
+  });
+};
+
+export const getParentFeeTotals = (
+  ledgers: StudentFeeLedger[],
+  payments: StudentFeePayment[],
+  selectedTerm: ParentFeeTermFilter,
+  academicYear: string,
+): {
+  enrichedLedgers: EnrichedParentLedger[];
+  billLedgers: EnrichedParentLedger[];
+  totals: ParentFeeTotals;
+} => {
+  const enrichedLedgers = enrichParentFeeLedgers(
+    ledgers,
+    payments,
+    selectedTerm,
+  );
+  const billLedgers = enrichedLedgers.filter(
+    (ledger) => ledger.fees.length > 0,
+  );
+
+  let totalFees = 0;
+  let totalPaidInLedgers = 0;
+
+  billLedgers.forEach((ledger) => {
+    totalFees += ledger.actualTotalDue;
+    totalPaidInLedgers += ledger.actualTotalPaid;
+  });
+
+  const unallocatedPayments = payments
+    .filter(
+      (payment) =>
+        payment.feeId === "online_payment" &&
+        payment.academicYear === academicYear,
+    )
+    .filter((payment) =>
+      selectedTerm === "all"
+        ? true
+        : normalizeParentFeeTerm(payment.term) === selectedTerm,
+    )
+    .reduce((sum, payment) => sum + payment.amountPaid, 0);
+
+  const totalPaid = totalPaidInLedgers + unallocatedPayments;
+  const totalBalance = Math.max(0, totalFees - totalPaid);
+
+  return {
+    enrichedLedgers,
+    billLedgers,
+    totals: { totalFees, totalPaid, totalBalance },
+  };
+};
+
+
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  startAfter,
+  limit,
+  documentId,
+  getDocs,
+} from "firebase/firestore";
+import { firestore } from "./firebase";
+
+interface PaginatedLedgerResult {
+  ledgers: StudentFeeLedger[];
+  nextCursor: string | null;
+}
+
+interface PaginatedPaymentResult {
+  payments: StudentFeePayment[];
+  nextCursor: string | null;
+}
+
+/**
+ * Normalize a createdAt value to a number (ms since epoch).
+ * Accepts Date or number (already ms).
+ */
+function normalizeCreatedAt(value: Date | number): number {
+  return value instanceof Date ? value.getTime() : value;
+}
+
+/**
+ * Create a cursor string from the last visible document.
+ */
+function createCursor(doc: FirebaseFirestore.DocumentData): string {
+  const createdAt = normalizeCreatedAt(doc.createdAt);
+  const payload = {
+    createdAt,
+    docId: doc.id,
+  };
+  return btoa(JSON.stringify(payload));
+}
+
+/**
+ * Parse a cursor string back into its components.
+ * Returns null if invalid.
+ */
+function parseCursor(cursor: string): { createdAt: number; docId: string } | null {
+  try {
+    const decoded = atob(cursor);
+    const payload = JSON.parse(decoded);
+    if (typeof payload.createdAt === "number" && typeof payload.docId === "string") {
+      return payload;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get paginated ledgers for a school, filtered by academicYear and optional term.
+ * Order: createdAt DESC, documentId DESC.
+ */
+export async function getPaginatedLedgers(
+  schoolId: string,
+  academicYear: string,
+  pageSize: number,
+  cursor: string | null = null,
+  term: FeeTerm | "all" = "all"
+): Promise<PaginatedLedgerResult> {
+  let ledgerQuery = query(
+    collection(firestore, "schools", schoolId, "feeLedgers"),
+    where("academicYear", "==", academicYear)
+  );
+
+  if (term !== "all") {
+    ledgerQuery = query(ledgerQuery, where("term", "==", term));
+  }
+
+  ledgerQuery = query(
+    ledgerQuery,
+    orderBy("createdAt", "desc"),
+    orderBy("__name__", "desc")
+  );
+
+  if (cursor) {
+    const parsed = parseCursor(cursor);
+    if (!parsed) {
+      throw new Error("Invalid cursor");
+    }
+    // Firestore expects the same order: createdAt desc, then docId desc.
+    // startAfter expects values in order.
+    ledgerQuery = query(
+      ledgerQuery,
+      startAfter(parsed.createdAt, parsed.docId)
+    );
+  }
+
+  ledgerQuery = query(ledgerQuery, limit(pageSize));
+
+  const snapshot = await getDocs(ledgerQuery);
+  const ledgers: StudentFeeLedger[] = [];
+  snapshot.forEach((doc) => {
+    ledgers.push({ id: doc.id, ...doc.data() } as StudentFeeLedger);
+  });
+
+  let nextCursor: string | null = null;
+  if (snapshot.size === pageSize) {
+    const lastDoc = snapshot.docs[snapshot.size - 1];
+    nextCursor = createCursor(lastDoc);
+  }
+
+  return { ledgers, nextCursor };
+}
+
+/**
+ * Get paginated payments for a school, filtered by academicYear and optional term.
+ * Order: createdAt DESC, documentId DESC.
+ */
+export async function getPaginatedPayments(
+  schoolId: string,
+  academicYear: string,
+  pageSize: number,
+  cursor: string | null = null,
+  term: FeeTerm | "all" = "all"
+): Promise<PaginatedPaymentResult> {
+  let paymentQuery = query(
+    collection(firestore, "schools", schoolId, "payments"),
+    where("academicYear", "==", academicYear)
+  );
+
+  if (term !== "all") {
+    paymentQuery = query(paymentQuery, where("term", "==", term));
+  }
+
+  paymentQuery = query(
+    paymentQuery,
+    orderBy("createdAt", "desc"),
+    orderBy("__name__", "desc")
+  );
+
+  if (cursor) {
+    const parsed = parseCursor(cursor);
+    if (!parsed) {
+      throw new Error("Invalid cursor");
+    }
+    paymentQuery = query(
+      paymentQuery,
+      startAfter(parsed.createdAt, parsed.docId)
+    );
+  }
+
+  paymentQuery = query(paymentQuery, limit(pageSize));
+
+  const snapshot = await getDocs(paymentQuery);
+  const payments: StudentFeePayment[] = [];
+  snapshot.forEach((doc) => {
+    payments.push({ id: doc.id, ...doc.data() } as StudentFeePayment);
+  });
+
+  let nextCursor: string | null = null;
+  if (snapshot.size === pageSize) {
+    const lastDoc = snapshot.docs[snapshot.size - 1];
+    nextCursor = createCursor(lastDoc);
+  }
+
+  return { payments, nextCursor };
+}

@@ -145,8 +145,9 @@ const ReportCard = () => {
   const [editingAdminRemark, setEditingAdminRemark] = useState(false);
   const [savingRemark, setSavingRemark] = useState(false);
 
-  // Bulk download state
-  const [bulkDownloading, setBulkDownloading] = useState(false);
+// Bulk download state
+   const [bulkDownloading, setBulkDownloading] = useState(false);
+   const [bulkProgress, setBulkProgress] = useState(0);
 
   const handleClassChange = async (classId: string) => {
     if (!schoolId) {
@@ -557,6 +558,7 @@ const ReportCard = () => {
 
     console.log("Starting bulk download for class:", selectedClass);
     setBulkDownloading(true);
+     setBulkProgress(0);
     try {
       const studentsInClass = await db.getStudents(schoolId, selectedClass);
       console.log("Found students:", studentsInClass.length);
@@ -712,360 +714,363 @@ const ReportCard = () => {
       // Create ZIP file
       const zip = new JSZip();
 
-      // Generate individual PDFs for each student
-      for (let i = 0; i < studentsInClass.length; i++) {
-        const student = studentsInClass[i];
-        console.log(
-          `Generating PDF ${i + 1}/${studentsInClass.length} for student: ${student.name}`,
-        );
+// Generate individual PDFs for each student
+       for (let i = 0; i < studentsInClass.length; i++) {
+         const student = studentsInClass[i];
+         console.log(
+           `Generating PDF ${i + 1}/${studentsInClass.length} for student: ${student.name}`,
+         );
 
-        const studentAssessments = allStudentsAssessmentsForClass.filter(
-          (a) => a.studentId === student.id,
-        );
+         const studentAssessments = allStudentsAssessmentsForClass.filter(
+           (a) => a.studentId === student.id,
+         );
 
-        const totalScoreForStudent = studentAssessments.reduce(
-          (sum, a) => sum + (a.total || 0),
-          0,
-        );
-        const averageScore =
-          studentAssessments.length > 0
-            ? (totalScoreForStudent / studentAssessments.length).toFixed(1)
-            : "0.0";
+         const totalScoreForStudent = studentAssessments.reduce(
+           (sum, a) => sum + (a.total || 0),
+           0,
+         );
+         const averageScore =
+           studentAssessments.length > 0
+             ? (totalScoreForStudent / studentAssessments.length).toFixed(1)
+             : "0.0";
 
-        const studentRemark = allRemarks.find(
-          (r) => r.studentId === student.id && Number(r.term) === termNumber,
-        );
+         const studentRemark = allRemarks.find(
+           (r) => r.studentId === student.id && Number(r.term) === termNumber,
+         );
 
-        const adminRemarkId = `${student.id}_term${termNumber}_${academicYear}`;
-        let adminRemarkData: any = undefined;
-        try {
-          adminRemarkData = await db.getAdminRemark(schoolId, adminRemarkId);
-        } catch (err) {
-          console.warn(
-            "Admin remark not available (missing basic_exam_reports), continuing without admin remark:",
-            err,
-          );
-          adminRemarkData = undefined;
-        }
+         const adminRemarkId = `${student.id}_term${termNumber}_${academicYear}`;
+         let adminRemarkData: any = undefined;
+         try {
+           adminRemarkData = await db.getAdminRemark(schoolId, adminRemarkId);
+         } catch (err) {
+           console.warn(
+             "Admin remark not available (missing basic_exam_reports), continuing without admin remark:",
+             err,
+           );
+           adminRemarkData = undefined;
+         }
 
-        const skills = allSkills.find((s) => s.studentId === student.id);
+         const skills = allSkills.find((s) => s.studentId === student.id);
 
-        // Calculate attendance
-        let attendance: any[] = [];
-        let holidayKeys = new Set<string>();
-        let nonHolidayAttendance: any[] = [];
+         // Calculate attendance
+         let attendance: any[] = [];
+         let holidayKeys = new Set<string>();
+         let nonHolidayAttendance: any[] = [];
 
-        try {
-          attendance = await db.getClassAttendance(schoolId, selectedClass);
-          holidayKeys = collectHolidayDateKeys([
-            ...attendance.filter((r) => r.isHoliday).map((r) => r.date),
-            ...(schoolConfig.holidayDates || []),
-          ]);
-          nonHolidayAttendance = attendance.filter((r) => !r.isHoliday);
-        } catch (error) {
-          console.warn(
-            "Attendance feature not available, using default values:",
-            error,
-          );
-          // Use config holidays only
-          holidayKeys = collectHolidayDateKeys(schoolConfig.holidayDates || []);
-        }
+         try {
+           attendance = await db.getClassAttendance(schoolId, selectedClass);
+           holidayKeys = collectHolidayDateKeys([
+             ...attendance.filter((r) => r.isHoliday).map((r) => r.date),
+             ...(schoolConfig.holidayDates || []),
+           ]);
+           nonHolidayAttendance = attendance.filter((r) => !r.isHoliday);
+         } catch (error) {
+           console.warn(
+             "Attendance feature not available, using default values:",
+             error,
+           );
+           // Use config holidays only
+           holidayKeys = collectHolidayDateKeys(schoolConfig.holidayDates || []);
+         }
 
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const vacationDate = schoolConfig.vacationDate
-          ? new Date(`${schoolConfig.vacationDate}T00:00:00`)
-          : null;
-        const endDate =
-          vacationDate && vacationDate < today ? vacationDate : today;
+         const today = new Date();
+         today.setHours(0, 0, 0, 0);
+         const vacationDate = schoolConfig.vacationDate
+           ? new Date(`${schoolConfig.vacationDate}T00:00:00`)
+           : null;
+         const endDate =
+           vacationDate && vacationDate < today ? vacationDate : today;
 
-        const expectedSchoolDays = getExpectedSchoolDayKeys({
-          reopenDate: schoolConfig.schoolReopenDate,
-          endDate,
-          holidayDates: Array.from(holidayKeys),
-          vacationDate: schoolConfig.vacationDate,
-          nextTermBegins: schoolConfig.nextTermBegins,
-        });
+         const expectedSchoolDays = getExpectedSchoolDayKeys({
+           reopenDate: schoolConfig.schoolReopenDate,
+           endDate,
+           holidayDates: Array.from(holidayKeys),
+           vacationDate: schoolConfig.vacationDate,
+           nextTermBegins: schoolConfig.nextTermBegins,
+         });
 
-        const expectedSchoolDaySet = new Set(expectedSchoolDays);
-        const totalSchoolDays = expectedSchoolDays.length;
+         const expectedSchoolDaySet = new Set(expectedSchoolDays);
+         const totalSchoolDays = expectedSchoolDays.length;
 
-        const studentPresentDates = new Set<string>();
-        if (nonHolidayAttendance.length > 0) {
-          for (const record of nonHolidayAttendance) {
-            if (!expectedSchoolDaySet.has(record.date)) continue;
-            if (record.presentStudentIds.includes(student.id)) {
-              studentPresentDates.add(record.date);
-            }
-          }
-        }
-        const presentDays = studentPresentDates.size;
-        const absentDays = Math.max(0, totalSchoolDays - presentDays);
-        const attendancePercentage =
-          totalSchoolDays > 0
-            ? Math.round((presentDays / totalSchoolDays) * 100)
-            : 0;
+         const studentPresentDates = new Set<string>();
+         if (nonHolidayAttendance.length > 0) {
+           for (const record of nonHolidayAttendance) {
+             if (!expectedSchoolDaySet.has(record.date)) continue;
+             if (record.presentStudentIds.includes(student.id)) {
+               studentPresentDates.add(record.date);
+             }
+           }
+         }
+         const presentDays = studentPresentDates.size;
+         const absentDays = Math.max(0, totalSchoolDays - presentDays);
+         const attendancePercentage =
+           totalSchoolDays > 0
+             ? Math.round((presentDays / totalSchoolDays) * 100)
+             : 0;
 
-        // Calculate rank and promotion status
-        const allStudentsTotalScores = studentsInClass.map((s) => {
-          const assessments = allStudentsAssessmentsForClass.filter(
-            (a) => a.studentId === s.id,
-          );
-          const totalScore = assessments.reduce(
-            (acc, a) => acc + (a.total || 0),
-            0,
-          );
-          return { studentId: s.id, totalScore };
-        });
+         // Calculate rank and promotion status
+         const allStudentsTotalScores = studentsInClass.map((s) => {
+           const assessments = allStudentsAssessmentsForClass.filter(
+             (a) => a.studentId === s.id,
+           );
+           const totalScore = assessments.reduce(
+             (acc, a) => acc + (a.total || 0),
+             0,
+           );
+           return { studentId: s.id, totalScore };
+         });
 
-        allStudentsTotalScores.sort((a, b) => {
-          if (b.totalScore !== a.totalScore) {
-            return b.totalScore - a.totalScore;
-          }
-          return a.studentId.localeCompare(b.studentId);
-        });
+         allStudentsTotalScores.sort((a, b) => {
+           if (b.totalScore !== a.totalScore) {
+             return b.totalScore - a.totalScore;
+           }
+           return a.studentId.localeCompare(b.studentId);
+         });
 
-        const rank =
-          allStudentsTotalScores.findIndex((s) => s.studentId === student.id) +
-          1;
+         const rank =
+           allStudentsTotalScores.findIndex((s) => s.studentId === student.id) +
+           1;
 
-        const currentClassIndex = CLASSES_LIST.findIndex(
-          (c) => c.id === student?.classId,
-        );
-        const currentClass = CLASSES_LIST[currentClassIndex];
-        const nextClassName = currentClass?.nextClassId
-          ? CLASSES_LIST.find((item) => item.id === currentClass.nextClassId)?.name || ""
-          : !currentClass?.section && currentClassIndex >= 0 && currentClassIndex < CLASSES_LIST.length - 1
-            ? CLASSES_LIST[currentClassIndex + 1].name
-            : "";
+         const currentClassIndex = CLASSES_LIST.findIndex(
+           (c) => c.id === student?.classId,
+         );
+         const currentClass = CLASSES_LIST[currentClassIndex];
+         const nextClassName = currentClass?.nextClassId
+           ? CLASSES_LIST.find((item) => item.id === currentClass.nextClassId)?.name || ""
+           : !currentClass?.section && currentClassIndex >= 0 && currentClassIndex < CLASSES_LIST.length - 1
+             ? CLASSES_LIST[currentClassIndex + 1].name
+             : "";
 
-        const isPromotionalTerm = schoolConfig.isPromotionalTerm ?? true;
-        const promotionStatus = isPromotionalTerm
-          ? totalScoreForStudent >= PASS_THRESHOLD
-            ? nextClassName
-              ? `Promoted to ${nextClassName}`
-              : "Promoted"
-            : "Fail"
-          : "N/A";
+         const isPromotionalTerm = schoolConfig.isPromotionalTerm ?? true;
+         const promotionStatus = isPromotionalTerm
+           ? totalScoreForStudent >= PASS_THRESHOLD
+             ? nextClassName
+               ? `Promoted to ${nextClassName}`
+               : "Promoted"
+             : "Fail"
+           : "N/A";
 
-        // Build data in the correct format for ReportCardLayout
-        const data = {
-          schoolInfo: {
-            name:
-              school?.name || schoolConfig.schoolName || "School Manager GH",
-            logoUrl: printableLogo,
-            address: school?.address || schoolConfig.address || "",
-            phone: school?.phone || schoolConfig.phone || "",
-            email: schoolConfig.email || "",
-            academicYear: schoolConfig.academicYear || "",
-            term: schoolConfig.currentTerm || "",
-          },
-          studentInfo: {
-            name: student?.name || "",
-            photoUrl: student?.photoUrl || "",
-            gender: student?.gender || "",
-            dob: student?.dob || "",
-            class:
-              CLASSES_LIST.find((c) => c.id === student?.classId)?.name || "",
-            classTeacher: classTeacher?.fullName || "N/A",
-          },
-          attendance: {
-            totalDays: totalSchoolDays || 0,
-            presentDays: presentDays || 0,
-            absentDays: absentDays || 0,
-            attendancePercentage: attendancePercentage || 0,
-          },
-          performance: studentAssessments || [],
-          positionRule: schoolConfig.positionRule || "subject",
-          gradingScale: schoolConfig.gradingScale,
-          reportCardSettings: schoolConfig.reportCardSettings,
-          summary: {
-            totalScore: totalScoreForStudent || 0,
-            averageScore: averageScore,
-            overallGrade: calculateGrade(Number(averageScore)).grade,
-            classPosition: `${rank}${["st", "nd", "rd"][rank - 1] || "th"}`,
-            totalStudents: studentsInClass.length || 0,
-          },
-          skills: {
-            punctuality: skills?.punctuality || "N/A",
-            neatness: skills?.neatness || "N/A",
-            conduct: skills?.conduct || "N/A",
-            attitudeToWork: skills?.attitudeToWork || "N/A",
-            classParticipation: skills?.classParticipation || "N/A",
-            homeworkCompletion: skills?.homeworkCompletion || "N/A",
-          },
-          remarks: {
-            teacher: studentRemark?.remark || "N/A",
-            classTeacher: studentRemark?.remark || "N/A",
-            headTeacher:
-              adminRemarkData?.remark ||
-              schoolConfig.headTeacherRemark ||
-              "An outstanding performance. The school is proud of you.",
-          },
-          promotion: {
-            status: promotionStatus,
-          },
-          termDates: {
-            endDate: schoolConfig.termEndDate || "",
-            reopeningDate: schoolConfig.nextTermBegins || "",
-            vacationDate: schoolConfig.vacationDate || "",
-          },
-          allStudentsAssessments: allStudentsAssessmentsForClass,
-        };
+         // Build data in the correct format for ReportCardLayout
+         const data = {
+           schoolInfo: {
+             name:
+               school?.name || schoolConfig.schoolName || "School Manager GH",
+             logoUrl: printableLogo,
+             address: school?.address || schoolConfig.address || "",
+             phone: school?.phone || schoolConfig.phone || "",
+             email: schoolConfig.email || "",
+             academicYear: schoolConfig.academicYear || "",
+             term: schoolConfig.currentTerm || "",
+           },
+           studentInfo: {
+             name: student?.name || "",
+             photoUrl: student?.photoUrl || "",
+             gender: student?.gender || "",
+             dob: student?.dob || "",
+             class:
+               CLASSES_LIST.find((c) => c.id === student?.classId)?.name || "",
+             classTeacher: classTeacher?.fullName || "N/A",
+           },
+           attendance: {
+             totalDays: totalSchoolDays || 0,
+             presentDays: presentDays || 0,
+             absentDays: absentDays || 0,
+             attendancePercentage: attendancePercentage || 0,
+           },
+           performance: studentAssessments || [],
+           positionRule: schoolConfig.positionRule || "subject",
+           gradingScale: schoolConfig.gradingScale,
+           reportCardSettings: schoolConfig.reportCardSettings,
+           summary: {
+             totalScore: totalScoreForStudent || 0,
+             averageScore: averageScore,
+             overallGrade: calculateGrade(Number(averageScore)).grade,
+             classPosition: `${rank}${["st", "nd", "rd"][rank - 1] || "th"}`,
+             totalStudents: studentsInClass.length || 0,
+           },
+           skills: {
+             punctuality: skills?.punctuality || "N/A",
+             neatness: skills?.neatness || "N/A",
+             conduct: skills?.conduct || "N/A",
+             attitudeToWork: skills?.attitudeToWork || "N/A",
+             classParticipation: skills?.classParticipation || "N/A",
+             homeworkCompletion: skills?.homeworkCompletion || "N/A",
+           },
+           remarks: {
+             teacher: studentRemark?.remark || "N/A",
+             classTeacher: studentRemark?.remark || "N/A",
+             headTeacher:
+               adminRemarkData?.remark ||
+               schoolConfig.headTeacherRemark ||
+               "An outstanding performance. The school is proud of you.",
+           },
+           promotion: {
+             status: promotionStatus,
+           },
+           termDates: {
+             endDate: schoolConfig.termEndDate || "",
+             reopeningDate: schoolConfig.nextTermBegins || "",
+             vacationDate: schoolConfig.vacationDate || "",
+           },
+           allStudentsAssessments: allStudentsAssessmentsForClass,
+         };
 
-        // Create a temporary container for this student's report card
-        const studentContainer = document.createElement("div");
-        studentContainer.style.position = "fixed";
-        studentContainer.style.left = "0";
-        studentContainer.style.top = "0";
-        studentContainer.style.width = `${REPORT_CARD_PDF_WIDTH_PX}px`;
-        studentContainer.style.minHeight = `${REPORT_CARD_PDF_HEIGHT_PX}px`;
-        studentContainer.style.background = "white";
-        studentContainer.style.padding = "0";
-        studentContainer.style.boxSizing = "border-box";
-        studentContainer.style.visibility = "visible";
-        studentContainer.style.pointerEvents = "none";
-        studentContainer.style.zIndex = "2147483647";
-        studentContainer.style.overflow = "hidden";
-        document.body.appendChild(studentContainer);
+         // Create a temporary container for this student's report card
+         const studentContainer = document.createElement("div");
+         studentContainer.style.position = "fixed";
+         studentContainer.style.left = "0";
+         studentContainer.style.top = "0";
+         studentContainer.style.width = `${REPORT_CARD_PDF_WIDTH_PX}px`;
+         studentContainer.style.minHeight = `${REPORT_CARD_PDF_HEIGHT_PX}px`;
+         studentContainer.style.background = "white";
+         studentContainer.style.padding = "0";
+         studentContainer.style.boxSizing = "border-box";
+         studentContainer.style.visibility = "visible";
+         studentContainer.style.pointerEvents = "none";
+         studentContainer.style.zIndex = "2147483647";
+         studentContainer.style.overflow = "hidden";
+         document.body.appendChild(studentContainer);
 
-        // Render the report card
-        const root = createRoot(studentContainer);
+         // Render the report card
+         const root = createRoot(studentContainer);
 
-        // Add error boundary by wrapping in try-catch during render
-        try {
-          console.log(`Rendering PDF data for student: ${student.name}`, {
-            hasSchoolInfo: !!data.schoolInfo,
-            hasStudentInfo: !!data.studentInfo,
-            hasAttendance: !!data.attendance,
-            hasPerformance: !!data.performance,
-          });
+         // Add error boundary by wrapping in try-catch during render
+         try {
+           console.log(`Rendering PDF data for student: ${student.name}`, {
+             hasSchoolInfo: !!data.schoolInfo,
+             hasStudentInfo: !!data.studentInfo,
+             hasAttendance: !!data.attendance,
+             hasPerformance: !!data.performance,
+           });
 
-          flushSync(() => {
-            root.render(React.createElement(ReportCardLayout, { data }));
-          });
-          await waitForNextPaint();
+           flushSync(() => {
+             root.render(React.createElement(ReportCardLayout, { data }));
+           });
+           await waitForNextPaint();
 
-          // Wait for rendering with increased timeout and check for content
-          let attempts = 0;
-          const maxAttempts = 10;
-          while (attempts < maxAttempts) {
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-            if (
-              studentContainer.children.length > 0 &&
-              studentContainer.textContent?.trim()
-            ) {
-              console.log(
-                `Container has content after ${attempts + 1} seconds for ${student.name}`,
-              );
-              break;
-            }
-            attempts++;
-          }
+           // Wait for rendering with increased timeout and check for content
+           let attempts = 0;
+           const maxAttempts = 10;
+           while (attempts < maxAttempts) {
+             await new Promise((resolve) => setTimeout(resolve, 1000));
+             if (
+               studentContainer.children.length > 0 &&
+               studentContainer.textContent?.trim()
+             ) {
+               console.log(
+                 `Container has content after ${attempts + 1} seconds for ${student.name}`,
+               );
+               break;
+             }
+             attempts++;
+           }
 
-          if (attempts >= maxAttempts) {
-            console.warn(
-              `Container still empty after ${maxAttempts} seconds for ${student.name}`,
-            );
-            console.log(
-              `Container HTML:`,
-              studentContainer.innerHTML.substring(0, 500),
-            );
-          }
+           if (attempts >= maxAttempts) {
+             console.warn(
+               `Container still empty after ${maxAttempts} seconds for ${student.name}`,
+             );
+             console.log(
+               `Container HTML:`,
+               studentContainer.innerHTML.substring(0, 500),
+             );
+           }
 
-          const reportCardElement = studentContainer.querySelector(
-            "#report-card",
-          ) as HTMLElement | null;
+           const reportCardElement = studentContainer.querySelector(
+             "#report-card",
+           ) as HTMLElement | null;
 
-          if (!reportCardElement) {
-            throw new Error(
-              `Bulk export could not find #report-card for ${student.name}`,
-            );
-          }
+           if (!reportCardElement) {
+             throw new Error(
+               `Bulk export could not find #report-card for ${student.name}`,
+             );
+           }
 
-          reportCardElement.style.width = `${REPORT_CARD_PDF_WIDTH_PX}px`;
-          reportCardElement.style.minHeight = `${REPORT_CARD_PDF_HEIGHT_PX}px`;
-          reportCardElement.style.margin = "0";
-          reportCardElement.style.borderRadius = "0";
-          reportCardElement.style.boxShadow = "none";
+           reportCardElement.style.width = `${REPORT_CARD_PDF_WIDTH_PX}px`;
+           reportCardElement.style.minHeight = `${REPORT_CARD_PDF_HEIGHT_PX}px`;
+           reportCardElement.style.margin = "0";
+           reportCardElement.style.borderRadius = "0";
+           reportCardElement.style.boxShadow = "none";
 
-          // Wait for images to load
-          try {
-            await waitForImages(reportCardElement);
-            console.log(`Images loaded for ${student.name}`);
-          } catch (imgError) {
-            console.warn(
-              `Error waiting for images for ${student.name}:`,
-              imgError,
-            );
-          }
-        } catch (renderError) {
-          console.error(
-            `Error rendering PDF for student ${student.name}:`,
-            renderError,
-          );
-          root.unmount();
-          document.body.removeChild(studentContainer);
-          // Continue with next student even if this one fails
-          continue;
-        }
+           // Wait for images to load
+           try {
+             await waitForImages(reportCardElement);
+             console.log(`Images loaded for ${student.name}`);
+           } catch (imgError) {
+             console.warn(
+               `Error waiting for images for ${student.name}:`,
+               imgError,
+             );
+           }
+         } catch (renderError) {
+           console.error(
+             `Error rendering PDF for student ${student.name}:`,
+             renderError,
+           );
+           root.unmount();
+           document.body.removeChild(studentContainer);
+           // Continue with next student even if this one fails
+           continue;
+         }
 
-        // Generate PDF for this student
-        try {
-          const reportCardElement = studentContainer.querySelector(
-            "#report-card",
-          ) as HTMLElement | null;
+         // Generate PDF for this student
+         try {
+           const reportCardElement = studentContainer.querySelector(
+             "#report-card",
+           ) as HTMLElement | null;
 
-          if (!reportCardElement) {
-            throw new Error(
-              `Bulk export could not find rendered report card for ${student.name}`,
-            );
-          }
+           if (!reportCardElement) {
+             throw new Error(
+               `Bulk export could not find rendered report card for ${student.name}`,
+             );
+           }
 
-          console.log(
-            `Starting PDF generation for ${student.name}, container children: ${studentContainer.children.length}, text length: ${studentContainer.textContent?.length || 0}`,
-          );
+           console.log(
+             `Starting PDF generation for ${student.name}, container children: ${studentContainer.children.length}, text length: ${studentContainer.textContent?.length || 0}`,
+           );
 
-          let pdfBlob = await generateSinglePagePdfBlob(reportCardElement);
+           let pdfBlob = await generateSinglePagePdfBlob(reportCardElement);
 
-          console.log(
-            `PDF generated successfully for ${student.name}`,
-            `(${(pdfBlob.size / 1024 / 1024).toFixed(2)} MB)`,
-            `Blob type: ${pdfBlob.type}`,
-          );
+           console.log(
+             `PDF generated successfully for ${student.name}`,
+             `(${(pdfBlob.size / 1024 / 1024).toFixed(2)} MB)`,
+             `Blob type: ${pdfBlob.type}`,
+           );
 
-          if (pdfBlob.size < 1024) {
-            console.warn(
-              `PDF blob for ${student.name} is very small (${pdfBlob.size} bytes) - retrying export`,
-            );
-            pdfBlob = await generateSinglePagePdfBlob(reportCardElement);
-          }
+           if (pdfBlob.size < 1024) {
+             console.warn(
+               `PDF blob for ${student.name} is very small (${pdfBlob.size} bytes) - retrying export`,
+             );
+             pdfBlob = await generateSinglePagePdfBlob(reportCardElement);
+           }
 
-          // Add PDF to ZIP
-          const sanitizedName = student.name
-            .replace(/[^a-z0-9]/gi, "_")
-            .toLowerCase();
-          zip.file(`${sanitizedName}_${i + 1}.pdf`, pdfBlob);
-        } catch (pdfError) {
-          console.error(
-            `Failed to generate PDF for student ${student.name}:`,
-            pdfError,
-          );
-          // Continue with next student even if PDF generation fails
-        } finally {
-          // Clean up
-          try {
-            root.unmount();
-          } catch (e) {
-            console.warn("Error unmounting root:", e);
-          }
-          try {
-            document.body.removeChild(studentContainer);
-          } catch (e) {
-            console.warn("Error removing container:", e);
-          }
-        }
-      }
+           // Add PDF to ZIP
+           const sanitizedName = student.name
+             .replace(/[^a-z0-9]/gi, "_")
+             .toLowerCase();
+           zip.file(`${sanitizedName}_${i + 1}.pdf`, pdfBlob);
+         } catch (pdfError) {
+           console.error(
+             `Failed to generate PDF for student ${student.name}:`,
+             pdfError,
+           );
+           // Continue with next student even if PDF generation fails
+         } finally {
+           // Clean up
+           try {
+             root.unmount();
+           } catch (e) {
+             console.warn("Error unmounting root:", e);
+           }
+           try {
+             document.body.removeChild(studentContainer);
+           } catch (e) {
+             console.warn("Error removing container:", e);
+           }
+         }
+         
+         // Update progress after each student
+         setBulkProgress(Math.round(((i + 1) / studentsInClass.length) * 100));
+       }
 
       // Generate ZIP file
       console.log("Creating ZIP file...");
@@ -1231,15 +1236,22 @@ const ReportCard = () => {
             className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
           >
             {bulkDownloading ? "Downloading..." : "Download All Report Cards"}
-          </button>
-        </div>
-
-        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-          To download all student report cards at once, select the class and
-          click <span className="font-semibold">Download All Report Cards</span>.
-          The system will generate one PDF per student and save them together in
-          a ZIP file.
-        </div>
+</button>
+         </div>
+         {bulkDownloading && (
+           <div className="mt-2 w-full bg-gray-200 rounded-full h-2.5">
+             <div 
+               className="bg-blue-600 h-2.5 rounded-full" 
+               style={{ width: `${bulkProgress}%` }}
+             ></div>
+           </div>
+         )}
+         <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+           To download all student report cards at once, select the class and
+           click <span className="font-semibold">Download All Report Cards</span>.
+           The system will generate one PDF per student and save them together in
+           a ZIP file.
+         </div>
       </div>
 
       {reportCardData && (

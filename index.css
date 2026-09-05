@@ -1,15 +1,13 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
 
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
-
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+@tailwind utilities;
+@tailwind utilities;
+@tailwind base;
+@tailwind components;
 :root {
   font-family: 'Poppins', sans-serif;
 }
-
-/* Placeholder stylesheet to satisfy index.html link and avoid build warnings. */
-
 @keyframes dash {
   from {
     stroke-dashoffset: 240;
@@ -18,8 +16,6 @@
     stroke-dashoffset: 0;
   }
 }
-
-/* reCAPTCHA container for MFA - invisible reCAPTCHA doesn't need to be visible */
 .recaptcha-container {
   position: absolute;
   left: -9999px;
@@ -33,11 +29,9 @@
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
 }
-
 .animate-fadeIn {
   animation: fadeIn 0.3s ease-out forwards;
 }
-
 @keyframes splashGradientDrift {
   0% {
     transform: translate3d(-4.5%, -3.5%, 0) scale(1);
@@ -49,7 +43,6 @@
     transform: translate3d(-4.5%, -3.5%, 0) scale(1);
   }
 }
-
 @keyframes splashLightSweep {
   0% {
     transform: translate3d(-20%, 0, 0);
@@ -64,13 +57,11 @@
     opacity: 0.46;
   }
 }
-
 .splash-screen {
   background:
     linear-gradient(135deg, #041222 0%, #06233f 36%, #071a2d 64%, #061326 100%);
   isolation: isolate;
 }
-
 .splash-gradient-shift,
 .splash-light-sweep {
   position: absolute;
@@ -78,7 +69,6 @@
   pointer-events: none;
   will-change: transform, opacity;
 }
-
 .splash-gradient-shift {
   background:
     linear-gradient(120deg, rgba(14, 165, 233, 0.36), transparent 32%),
@@ -87,7 +77,6 @@
   animation: splashGradientDrift 9s ease-in-out infinite;
   z-index: 0;
 }
-
 .splash-light-sweep {
   background:
     linear-gradient(100deg, transparent 8%, rgba(56, 189, 248, 0.2) 34%, rgba(45, 212, 191, 0.16) 50%, transparent 74%);
@@ -95,7 +84,6 @@
   mix-blend-mode: screen;
   z-index: 0;
 }
-
 @media (prefers-reduced-motion: reduce) {
   .splash-gradient-shift,
   .splash-light-sweep {
@@ -103,35 +91,27 @@
     transform: none;
   }
 }
-
-/* Custom Scrollbar Styling */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1; /* slate-300 */
   border-radius: 10px;
   border: 1px solid transparent;
   background-clip: content-box;
 }
-
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8; /* slate-400 */
   background-clip: content-box;
 }
-
-/* Firefox support */
 * {
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 transparent;
 }
-
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
@@ -139,7 +119,6 @@
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
-
 @keyframes assistantGuidedPulse {
   0% {
     outline-color: rgb(34 211 238 / 0);
@@ -157,7 +136,6 @@
     box-shadow: 0 0 0 0 rgb(34 211 238 / 0);
   }
 }
-
 .assistant-guided-highlight {
   position: relative;
   z-index: 2;
@@ -165,7 +143,6 @@
   outline-offset: 5px;
   animation: assistantGuidedPulse 4.2s ease-out both;
 }
-
 /*
  * Admin dashboard theme
  * Scoped to the shared layout for Super Admin, School Admin, Teacher, and
@@ -175,59 +152,49 @@
 [data-super-admin-theme] {
   color-scheme: light;
 }
-
 [data-super-admin-theme="dark"] {
   color-scheme: dark;
   background: #020617 !important;
   color: #e2e8f0;
 }
-
 [data-super-admin-theme="dark"] > div {
   background-color: #020617;
 }
-
 [data-super-admin-theme="dark"] header:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] main:not([data-ai-theme] *) {
   background-color: #020617;
   color: #e2e8f0;
 }
-
 [data-super-admin-theme="dark"] [class~="bg-white"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="bg-white/"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class~="bg-slate-50"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="bg-slate-50/"]:not([data-ai-theme] *) {
   background-color: #0f172a !important;
 }
-
 [data-super-admin-theme="dark"] [class~="bg-slate-100"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="bg-slate-100/"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class~="bg-gray-50"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class~="bg-gray-100"]:not([data-ai-theme] *) {
   background-color: #1e293b !important;
 }
-
 [data-super-admin-theme="dark"] [class~="bg-orange-100"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class~="bg-amber-100"]:not([data-ai-theme] *) {
   background-color: #34230f !important;
 }
-
 [data-super-admin-theme="dark"] [class~="bg-green-100"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class~="bg-emerald-100"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class~="bg-teal-100"]:not([data-ai-theme] *) {
   background-color: #07372f !important;
 }
-
 [data-super-admin-theme="dark"] [class~="bg-purple-100"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class~="bg-violet-100"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class~="bg-indigo-100"]:not([data-ai-theme] *) {
   background-color: #251b45 !important;
 }
-
 [data-super-admin-theme="dark"] [class*="bg-[#E6F0FA]"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="bg-[#e6f0fa]"]:not([data-ai-theme] *) {
   background-color: #102845 !important;
 }
-
 [data-super-admin-theme="dark"] [class*="from-white"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="from-slate-50"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="from-slate-100"]:not([data-ai-theme] *),
@@ -257,7 +224,6 @@
   --tw-gradient-from: #0f172a var(--tw-gradient-from-position) !important;
   --tw-gradient-to: rgb(15 23 42 / 0) var(--tw-gradient-to-position) !important;
 }
-
 [data-super-admin-theme="dark"] [class*="via-white"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="via-slate-50"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="via-slate-100"]:not([data-ai-theme] *),
@@ -283,7 +249,6 @@
 [data-super-admin-theme="dark"] [class*="via-violet-200"]:not([data-ai-theme] *) {
   --tw-gradient-stops: var(--tw-gradient-from), #1e293b var(--tw-gradient-via-position), var(--tw-gradient-to) !important;
 }
-
 [data-super-admin-theme="dark"] [class*="to-white"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="to-slate-50"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="to-slate-100"]:not([data-ai-theme] *),
@@ -312,25 +277,21 @@
 [data-super-admin-theme="dark"] [class*="to-rose-100"]:not([data-ai-theme] *) {
   --tw-gradient-to: #0f172a var(--tw-gradient-to-position) !important;
 }
-
 [data-super-admin-theme="dark"] [class~="bg-emerald-50"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="bg-emerald-50/"]:not([data-ai-theme] *) {
   background-color: #052e2b !important;
 }
-
 [data-super-admin-theme="dark"] [class~="bg-amber-50"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="bg-amber-50/"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class~="bg-orange-50"]:not([data-ai-theme] *) {
   background-color: #2c1b0b !important;
 }
-
 [data-super-admin-theme="dark"] [class~="bg-rose-50"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="bg-rose-50/"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class~="bg-red-50"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="bg-red-50/"]:not([data-ai-theme] *) {
   background-color: #32121c !important;
 }
-
 [data-super-admin-theme="dark"] [class~="bg-blue-50"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="bg-blue-50/"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class~="bg-cyan-50"]:not([data-ai-theme] *),
@@ -349,8 +310,6 @@
 [data-super-admin-theme="dark"] [class*="bg-teal-50/"]:not([data-ai-theme] *) {
   background-color: #111c35 !important;
 }
-
-/* Catch custom card backgrounds that embed a white gradient inline. */
 [data-super-admin-theme="dark"] [style*="linear-gradient"][style*="#ffffff"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [style*="linear-gradient"][style*="rgb(255, 255, 255"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [style*="linear-gradient"][style*="rgb(255,255,255"]:not([data-ai-theme] *),
@@ -358,46 +317,37 @@
 [data-super-admin-theme="dark"] [style*="linear-gradient"][style*="rgba(255,255,255"]:not([data-ai-theme] *) {
   background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%) !important;
 }
-
-/* Catch arbitrary Tailwind gradients containing bright white color stops. */
 [data-super-admin-theme="dark"] [class*="rgba(255,255,255"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="#ffffff"]:not([data-ai-theme] *) {
   background-image: linear-gradient(135deg, #1e293b 0%, #0f172a 100%) !important;
 }
-
 [data-super-admin-theme="dark"] [class*="text-emerald-7"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-emerald-8"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-emerald-9"]:not([data-ai-theme] *) {
   color: #6ee7b7 !important;
 }
-
 [data-super-admin-theme="dark"] [class*="text-amber-7"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-amber-8"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-amber-9"]:not([data-ai-theme] *) {
   color: #fcd34d !important;
 }
-
 [data-super-admin-theme="dark"] [class*="text-rose-7"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-rose-8"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-rose-9"]:not([data-ai-theme] *) {
   color: #fda4af !important;
 }
-
-/* Keep alert and action text readable against the dashboard's navy surfaces. */
 [data-super-admin-theme="dark"] [class*="text-red-6"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-red-7"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-red-8"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-red-9"]:not([data-ai-theme] *) {
   color: #fca5a5 !important;
 }
-
 [data-super-admin-theme="dark"] [class*="text-blue-6"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-blue-7"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-blue-8"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-blue-9"]:not([data-ai-theme] *) {
   color: #7dd3fc !important;
 }
-
 [data-super-admin-theme="dark"] [class*="text-sky-6"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-sky-7"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-sky-8"]:not([data-ai-theme] *),
@@ -410,64 +360,53 @@
 [data-super-admin-theme="dark"] [class*="text-[#0b4a82]"]:not([data-ai-theme] *) {
   color: #7dd3fc !important;
 }
-
 [data-super-admin-theme="dark"] [class*="text-slate-9"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-slate-8"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-gray-9"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-gray-8"]:not([data-ai-theme] *) {
   color: #f8fafc !important;
 }
-
 [data-super-admin-theme="dark"] [class*="text-slate-7"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-slate-6"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-gray-7"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-gray-6"]:not([data-ai-theme] *) {
   color: #cbd5e1 !important;
 }
-
 [data-super-admin-theme="dark"] [class*="text-slate-5"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-slate-4"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-gray-5"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="text-gray-4"]:not([data-ai-theme] *) {
   color: #94a3b8 !important;
 }
-
-/* The donut center remains white in dark mode, so its total must stay dark. */
 [data-super-admin-theme="dark"]
   .dashboard-donut-total.dashboard-donut-total {
   color: #0f172a !important;
 }
-
 [data-super-admin-theme="dark"]
   .teacher-attendance-summary-card.teacher-attendance-summary-card {
   background: linear-gradient(145deg, #13233a 0%, #0f1d31 55%, #0b1729 100%) !important;
   border-color: #36506f !important;
   box-shadow: 0 18px 45px -28px rgb(2 132 199 / 0.45);
 }
-
 [data-super-admin-theme="dark"] .teacher-class-badge.teacher-class-badge {
   background: #123352 !important;
   border-color: #3478a9 !important;
   color: #bae6fd !important;
 }
-
 [data-super-admin-theme="dark"]
   .attendance-day-absent.attendance-day-absent {
   background: #fecaca !important;
   color: #7f1d1d !important;
 }
-
 [data-super-admin-theme="dark"]
   .attendance-day-present.attendance-day-present {
   background: #065f46 !important;
   color: #ecfdf5 !important;
 }
-
 [data-super-admin-theme="dark"]
   .student-grade-badge.student-grade-badge {
   color: #111827 !important;
 }
-
 [data-super-admin-theme="dark"]
   .finance-onboarding-step-active.finance-onboarding-step-active {
   background: #164e63 !important;
@@ -475,42 +414,36 @@
   color: #ecfeff !important;
   box-shadow: 0 0 0 3px rgb(34 211 238 / 0.12);
 }
-
 [data-super-admin-theme="dark"]
   .payroll-step-number.payroll-step-number {
   background: #bae6fd !important;
   color: #0f172a !important;
   box-shadow: 0 0 0 1px #7dd3fc;
 }
-
 [data-super-admin-theme="dark"]
   .payroll-header-icon.payroll-header-icon {
   background: #123352 !important;
   color: #7dd3fc !important;
   box-shadow: 0 0 0 1px #3478a9;
 }
-
 [data-super-admin-theme="dark"]
   .recovery-metric-recycle.recovery-metric-recycle {
   background: #4c0519 !important;
   color: #fecdd3 !important;
   box-shadow: 0 0 0 1px #9f1239;
 }
-
 [data-super-admin-theme="dark"]
   .recovery-metric-coverage.recovery-metric-coverage {
   background: #164e63 !important;
   color: #cffafe !important;
   box-shadow: 0 0 0 1px #0e7490;
 }
-
 [data-super-admin-theme="dark"]
   .recovery-recycle-badge.recovery-recycle-badge {
   background: #fecdd3 !important;
   color: #881337 !important;
   box-shadow: 0 0 0 1px #fda4af;
 }
-
 [data-super-admin-theme="dark"]
   .school-assistant-drawer.school-assistant-drawer {
   background: #071224 !important;
@@ -518,7 +451,6 @@
   color: #e2e8f0;
   box-shadow: -22px 0 60px rgb(2 6 23 / 0.58);
 }
-
 [data-super-admin-theme="dark"]
   .school-assistant-drawer.school-assistant-drawer
   > header,
@@ -528,125 +460,106 @@
   background: #0f172a !important;
   border-color: #334155 !important;
 }
-
 [data-super-admin-theme="dark"]
   .assessment-result-header.assessment-result-header {
   background: #1e293b !important;
   color: #f8fafc !important;
   border-color: #475569 !important;
 }
-
 [data-super-admin-theme="dark"]
   .teacher-performance-grade.teacher-performance-grade {
   color: #111827 !important;
 }
-
 [data-super-admin-theme="dark"]
   .teacher-performance-grade-a.teacher-performance-grade-a {
   color: #a7f3d0 !important;
 }
-
 [data-super-admin-theme="dark"]
   .teacher-remark-suggestion.teacher-remark-suggestion {
   background: #2e1065 !important;
   border-color: #a855f7 !important;
   color: #e9d5ff !important;
 }
-
 [data-super-admin-theme="dark"]
   .parent-attendance-status-present.parent-attendance-status-present {
   background: #064e3b !important;
   border-color: #34d399 !important;
   color: #d1fae5 !important;
 }
-
 [data-super-admin-theme="dark"]
   .parent-attendance-status-absent.parent-attendance-status-absent {
   background: #fecaca !important;
   border-color: #f87171 !important;
   color: #7f1d1d !important;
 }
-
 [data-super-admin-theme="dark"]
   .parent-attendance-status-holiday.parent-attendance-status-holiday {
   background: #dbeafe !important;
   border-color: #60a5fa !important;
   color: #1e3a8a !important;
 }
-
 [data-super-admin-theme="dark"]
   .parent-children-count.parent-children-count {
   background: #1e3a5f !important;
   color: #dbeafe !important;
   box-shadow: 0 0 0 1px #3b82f6;
 }
-
 [data-super-admin-theme="dark"]
   .parent-pay-online-button.parent-pay-online-button {
   background: #2563eb !important;
   color: #ffffff !important;
   box-shadow: 0 10px 24px -14px rgb(37 99 235 / 0.85) !important;
 }
-
 [data-super-admin-theme="dark"]
   .parent-fee-status-paid.parent-fee-status-paid {
   background: #064e3b !important;
   border-color: #34d399 !important;
   color: #d1fae5 !important;
 }
-
 [data-super-admin-theme="dark"]
   .parent-fee-status-part-paid.parent-fee-status-part-paid {
   background: #fef3c7 !important;
   border-color: #fbbf24 !important;
   color: #78350f !important;
 }
-
 [data-super-admin-theme="dark"]
   .parent-fee-status-unpaid.parent-fee-status-unpaid {
   background: #fecaca !important;
   border-color: #f87171 !important;
   color: #7f1d1d !important;
 }
-
 [data-super-admin-theme="dark"]
   .parent-report-grade-c.parent-report-grade-c {
   background: #fef3c7 !important;
   border-color: #fbbf24 !important;
   color: #713f12 !important;
 }
-
 [data-super-admin-theme="dark"]
   .parent-summary-fees.parent-summary-fees {
   background: #451a03 !important;
   border-color: #b45309 !important;
 }
-
 [data-super-admin-theme="dark"]
   .parent-summary-fees.parent-summary-fees
   [class*="text-orange"] {
   color: #fed7aa !important;
 }
-
 [data-super-admin-theme="dark"]
   .parent-summary-attendance.parent-summary-attendance {
   background: #2e1065 !important;
   border-color: #7e22ce !important;
 }
-
 [data-super-admin-theme="dark"]
   .parent-summary-attendance.parent-summary-attendance
   [class*="text-purple"] {
   color: #e9d5ff !important;
 }
-
 [data-super-admin-theme="dark"] [class*="border-slate-"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="border-gray-"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] [class*="border-white"]:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] header:not([data-ai-theme] *) {
   border-color: #334155 !important;
 }
-
 [data-super-admin-theme="dark"] input:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] textarea:not([data-ai-theme] *),
 [data-super-admin-theme="dark"] select:not([data-ai-theme] *) {
@@ -654,28 +567,22 @@
   background-color: #0f172a;
   color: #f8fafc;
 }
-
 [data-super-admin-theme="dark"] input:not([data-ai-theme] *)::placeholder,
 [data-super-admin-theme="dark"] textarea:not([data-ai-theme] *)::placeholder {
   color: #64748b;
 }
-
 [data-super-admin-theme="dark"] table:not([data-ai-theme] *) {
   color: #e2e8f0;
 }
-
 [data-super-admin-theme="dark"] tr:not([data-ai-theme] *) {
   border-color: #334155;
 }
-
 [data-super-admin-theme="dark"] .dashboard-theme-toggle {
   border-color: #334155 !important;
   background: #0f172a !important;
   color: #fbbf24 !important;
   box-shadow: 0 8px 24px rgb(2 6 23 / 0.35);
 }
-
-/* Prevent light Tailwind hover utilities from flashing over dark surfaces. */
 [data-super-admin-theme="dark"] [class~="hover:bg-white"]:not([data-ai-theme] *):hover,
 [data-super-admin-theme="dark"] [class*="hover:bg-white/"]:not([data-ai-theme] *):hover,
 [data-super-admin-theme="dark"] [class*="hover:bg-slate-50"]:not([data-ai-theme] *):hover,
@@ -687,7 +594,6 @@
   background-color: #1e293b !important;
   color: #f1f5f9 !important;
 }
-
 [data-super-admin-theme="dark"] [class*="hover:bg-blue-50"]:not([data-ai-theme] *):hover,
 [data-super-admin-theme="dark"] [class*="hover:bg-blue-100"]:not([data-ai-theme] *):hover,
 [data-super-admin-theme="dark"] [class*="hover:bg-blue-200"]:not([data-ai-theme] *):hover,
@@ -703,7 +609,6 @@
   background-color: #102845 !important;
   color: #bae6fd !important;
 }
-
 [data-super-admin-theme="dark"] [class*="hover:bg-emerald-50"]:not([data-ai-theme] *):hover,
 [data-super-admin-theme="dark"] [class*="hover:bg-emerald-100"]:not([data-ai-theme] *):hover,
 [data-super-admin-theme="dark"] [class*="hover:bg-emerald-200"]:not([data-ai-theme] *):hover,
@@ -712,7 +617,6 @@
   background-color: #064e3b !important;
   color: #a7f3d0 !important;
 }
-
 [data-super-admin-theme="dark"] [class*="hover:bg-amber-50"]:not([data-ai-theme] *):hover,
 [data-super-admin-theme="dark"] [class*="hover:bg-amber-100"]:not([data-ai-theme] *):hover,
 [data-super-admin-theme="dark"] [class*="hover:bg-amber-200"]:not([data-ai-theme] *):hover,
@@ -721,7 +625,6 @@
   background-color: #451a03 !important;
   color: #fde68a !important;
 }
-
 [data-super-admin-theme="dark"] [class*="hover:bg-red-50"]:not([data-ai-theme] *):hover,
 [data-super-admin-theme="dark"] [class*="hover:bg-red-100"]:not([data-ai-theme] *):hover,
 [data-super-admin-theme="dark"] [class*="hover:bg-rose-50"]:not([data-ai-theme] *):hover,
@@ -729,11 +632,9 @@
   background-color: #4c0519 !important;
   color: #fecdd3 !important;
 }
-
 [data-super-admin-theme="dark"] ::-webkit-scrollbar-thumb {
   background: #475569;
 }
-
 @media (prefers-reduced-motion: reduce) {
   [data-super-admin-theme],
   [data-super-admin-theme] * {

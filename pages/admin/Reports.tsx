@@ -19,6 +19,7 @@ import {
 import { useSchoolClasses } from "../../hooks/useSchoolClasses";
 import { Download, BookOpen, Users, CheckCircle, XCircle } from "lucide-react";
 import { Assessment } from "../../types";
+import * as XLSX from "xlsx";
 
 const Reports = () => {
   const { school } = useSchool();
@@ -186,7 +187,7 @@ const Reports = () => {
     }
   }, [availableClasses, selectedClass]);
 
-  const downloadCSV = () => {
+  const downloadExcel = () => {
     if (reportData.length === 0) return;
 
     // 1. Define Headers
@@ -202,38 +203,134 @@ const Reports = () => {
     // 2. Format Rows
     const rows = reportData.map((row, index) => {
       const subjectScores = subjects.map((sub) => row.scores[sub]);
-      // Wrap string fields in quotes to handle commas safely
       return [
         index + 1,
-        `"${row.student.name}"`,
+        row.student.name,
         ...subjectScores,
         row.totalScore,
         row.average,
-        `"${row.remark}"`,
+        row.remark,
       ];
     });
 
-    // 3. Combine into CSV String
-    const csvContent = [
-      headers.join(","),
-      ...rows.map((e) => e.join(",")),
-    ].join("\n");
+    // 3. Create workbook
+    const wb = XLSX.utils.book_new();
 
-    // 4. Create Blob and Trigger Download
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
+    // 4. Prepare data for worksheet
+    const data = [headers, ...rows];
 
+    // 5. Create worksheet
+    const ws = XLSX.utils.aoa_to_sheet(data);
+
+    // 6. Style header row
+    const headerStyle = {
+      font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 },
+      fill: { fgColor: { rgb: "1E40AF" }, patternType: "solid" },
+      alignment: { horizontal: "center", vertical: "center", wrapText: true },
+      border: {
+        top: { style: "thin", color: { rgb: "000000" } },
+        bottom: { style: "thin", color: { rgb: "000000" } },
+        left: { style: "thin", color: { rgb: "000000" } },
+        right: { style: "thin", color: { rgb: "000000" } },
+      },
+    };
+
+    // Apply header style to all header cells
+    for (let i = 0; i < headers.length; i++) {
+      const cellRef = XLSX.utils.encode_cell({ r: 0, c: i });
+      if (ws[cellRef]) {
+        ws[cellRef].s = headerStyle;
+      }
+    }
+
+    // 7. Style data rows
+    const dataStyle = {
+      font: { sz: 10 },
+      alignment: { horizontal: "left", vertical: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "D1D5DB" } },
+        bottom: { style: "thin", color: { rgb: "D1D5DB" } },
+        left: { style: "thin", color: { rgb: "D1D5DB" } },
+        right: { style: "thin", color: { rgb: "D1D5DB" } },
+      },
+    };
+
+    const numberStyle = {
+      font: { sz: 10 },
+      alignment: { horizontal: "right", vertical: "center" },
+      numFormat: "#,##0",
+      border: {
+        top: { style: "thin", color: { rgb: "D1D5DB" } },
+        bottom: { style: "thin", color: { rgb: "D1D5DB" } },
+        left: { style: "thin", color: { rgb: "D1D5DB" } },
+        right: { style: "thin", color: { rgb: "D1D5DB" } },
+      },
+    };
+
+    const centerStyle = {
+      font: { sz: 10 },
+      alignment: { horizontal: "center", vertical: "center" },
+      border: {
+        top: { style: "thin", color: { rgb: "D1D5DB" } },
+        bottom: { style: "thin", color: { rgb: "D1D5DB" } },
+        left: { style: "thin", color: { rgb: "D1D5DB" } },
+        right: { style: "thin", color: { rgb: "D1D5DB" } },
+      },
+    };
+
+    // Apply data style to all data cells
+    for (let r = 1; r < data.length; r++) {
+      for (let c = 0; c < headers.length; c++) {
+        const cellRef = XLSX.utils.encode_cell({ r, c });
+        if (ws[cellRef]) {
+          if (c === 0) {
+            // Position column - center aligned
+            ws[cellRef].s = centerStyle;
+          } else if (c >= headers.length - 3) {
+            // Total Score, Average Grade, Remark columns
+            if (c === headers.length - 1) {
+              // Remark column - left aligned
+              ws[cellRef].s = dataStyle;
+            } else {
+              // Total Score, Average Grade - right aligned
+              ws[cellRef].s = numberStyle;
+            }
+          } else {
+            // Subject columns - right aligned
+            ws[cellRef].s = numberStyle;
+          }
+        }
+      }
+    }
+
+    // 8. Set column widths
+    const colWidths = headers.map((header, index) => {
+      let maxWidth = header.length;
+      for (let r = 0; r < data.length; r++) {
+        const cellValue = data[r]?.[index];
+        if (cellValue !== null && cellValue !== undefined) {
+          const cellStr = String(cellValue);
+          if (cellStr.length > maxWidth) {
+            maxWidth = cellStr.length;
+          }
+        }
+      }
+      return { wch: Math.min(maxWidth + 4, 50) };
+    });
+    ws["!cols"] = colWidths;
+
+    // 9. Freeze header row
+    ws["!freeze"] = { xSplit: 0, ySplit: 1, activeCell: "A2" };
+
+    // 10. Add worksheet to workbook
+    XLSX.utils.book_append_sheet(wb, ws, "Report");
+
+    // 11. Generate Excel file
     const className =
       CLASSES_LIST.find((c) => c.id === selectedClass)?.name || "Class";
-    const filename = `${className}_Report_${schoolConfig.academicYear.replace("-", "_")}_Term${schoolConfig.currentTerm?.match(/\d+/)?.[0] || CURRENT_TERM}.csv`;
+    const filename = `${className}_Report_${schoolConfig.academicYear.replace("-", "_")}_Term${schoolConfig.currentTerm?.match(/\d+/)?.[0] || CURRENT_TERM}.xlsx`;
 
-    link.setAttribute("href", url);
-    link.setAttribute("download", filename);
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    XLSX.writeFile(wb, filename, { bookType: "xlsx" });
   };
 
   return (
@@ -311,11 +408,11 @@ const Reports = () => {
                 ))}
               </select>
               <button
-                onClick={downloadCSV}
+                onClick={downloadExcel}
                 disabled={loading || reportData.length === 0}
                 className="flex items-center gap-2 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-4 py-2 rounded-full transition-colors no-print font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Download size={18} /> Export CSV
+                <Download size={18} /> Export Excel
               </button>
             </div>
           </div>

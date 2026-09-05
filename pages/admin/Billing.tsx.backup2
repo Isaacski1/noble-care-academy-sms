@@ -1,0 +1,642 @@
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  collection,
+  getDocs,
+  orderBy,
+  query,
+  Timestamp,
+  where,
+} from "firebase/firestore";
+import Layout from "../../components/Layout";
+import { useSchool } from "../../context/SchoolContext";
+import { db } from "../../services/mockDb";
+import { firestore } from "../../services/firebase";
+import {
+  initiateSchoolBilling,
+  verifySchoolPayment,
+} from "../../services/backendApi";
+import { showToast } from "../../services/toast";
+import { PAYSTACK_PUBLIC_KEY } from "../../src/config";
+import { CreditCard, ShieldCheck, Calendar, ArrowRight } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+
+const Billing: React.FC = () => {
+  const { school, refreshSchool } = useSchool();
+  const navigate = useNavigate();
+  const [processing, setProcessing] = useState(false);
+  const [amount, setAmount] = useState("0");
+  const [paymentHistory, setPaymentHistory] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [schoolConfig, setSchoolConfig] = useState<any>(null);
+
+  const formatAmount = (value?: number, currency = "GHS") => {
+    if (!value && value !== 0) return "-";
+    // Paystack stores every transaction amount in the currency's smallest
+    // unit. For GHS, 10 means 10 pesewas (GHS 0.10), not GHS 10.
+    const normalized = value / 100;
+    return new Intl.NumberFormat("en-GH", {
+      style: "currency",
+      currency,
+    }).format(normalized);
+  };
+
+  const formatDate = (value?: Timestamp | number | string) => {
+    if (!value) return "-";
+    if (value instanceof Timestamp) {
+      return value.toDate().toLocaleString();
+    }
+    if (typeof value === "number") {
+      return new Date(value).toLocaleString();
+    }
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? "-" : parsed.toLocaleString();
+  };
+
+  const getStatusMeta = (status?: string) => {
+    const normalized = (status || "pending").toLowerCase();
+
+    if (["success", "paid", "active"].includes(normalized)) {
+      return {
+        label: "Paid",
+        className: "bg-emerald-50 text-emerald-700",
+      };
+    }
+
+    if (["failed", "failure", "past_due"].includes(normalized)) {
+      return {
+        label: "Failed",
+        className: "bg-rose-50 text-rose-700",
+      };
+    }
+
+    if (["abandoned", "cancelled", "canceled"].includes(normalized)) {
+      return {
+        label: "Cancelled",
+        className: "bg-slate-100 text-slate-600",
+      };
+    }
+
+    return {
+      label: "Pending",
+      className: "bg-amber-50 text-amber-700",
+    };
+  };
+
+  const isBillingPayment = (payment: any) => {
+    const reference = String(payment?.reference || payment?.id || "");
+    const module = String(payment?.module || "").toLowerCase();
+    const type = String(payment?.type || "").toLowerCase();
+    const category = String(payment?.category || "").toLowerCase();
+
+    // Exclude SMS topup payments
+    if (type === "sms_topup" || category === "sms_topup") {
+      return false;
+    }
+
+    // Exclude fee payments
+    if (reference.toUpperCase().startsWith("FEES-")) {
+      return false;
+    }
+
+    return (
+      module === "billing" ||
+      type === "subscription" ||
+      category === "subscription" ||
+      reference.startsWith("sch_")
+    );
+  };
+
+  const subscriptionPaymentHistory = useMemo(
+    () => paymentHistory.filter(isBillingPayment),
+    [paymentHistory],
+  );
+
+  const billingStatus = useMemo(() => {
+    const status = (school as any)?.billing?.status || "inactive";
+    const plan = (school as any)?.plan || "monthly";
+    return { status, plan };
+  }, [school]);
+
+  const isFreePlan = billingStatus.plan === "free";
+  const isTrialPlan =
+    billingStatus.plan === "trial" || (school as any)?.status === "trial_active";
+  const isTrialVacationPaused = (school as any)?.trialVacationPaused === true;
+  const trialEndsAt = useMemo(() => {
+    const raw = (school as any)?.planEndsAt;
+    if (!raw) return null;
+    const date = new Date(typeof raw?.toDate === "function" ? raw.toDate() : raw);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }, [school]);
+  const isTrialActive = Boolean(
+    isTrialPlan &&
+      trialEndsAt &&
+      (isTrialVacationPaused || trialEndsAt.getTime() > Date.now()),
+  );
+  const specialPricing = useMemo(() => {
+    const pricing = (school as any)?.billing?.specialPricing;
+    const amount = Number(pricing?.amount);
+    const cycle = String(pricing?.cycle || "").toLowerCase();
+    if (
+      !pricing?.enabled ||
+      !Number.isFinite(amount) ||
+      amount <= 0 ||
+      !["monthly", "termly", "yearly"].includes(cycle)
+    ) {
+      return null;
+    }
+    return {
+      amount,
+      cycle: cycle as "monthly" | "termly" | "yearly",
+      note: String(pricing?.note || "").trim(),
+    };
+  }, [school]);
+  const effectiveBillingCycle =
+    specialPricing?.cycle ||
+    (school as any)?.billing?.postTrialPlan ||
+    (isTrialPlan ? "monthly" : billingStatus.plan);
+
+  const parseSchoolDate = (value?: string | null) => {
+    if (!value) return null;
+    const parsed = new Date(`${value}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const diffDays = (start: Date, end: Date) => {
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const startMid = new Date(start);
+    const endMid = new Date(end);
+    startMid.setHours(0, 0, 0, 0);
+    endMid.setHours(0, 0, 0, 0);
+    return Math.floor((endMid.getTime() - startMid.getTime()) / msPerDay);
+  };
+
+  const displayStatus = useMemo(() => {
+    const latestPayment = subscriptionPaymentHistory[0];
+    return getStatusMeta(latestPayment?.status || billingStatus.status);
+  }, [billingStatus.status, subscriptionPaymentHistory]);
+
+  const expectedAmount = useMemo(() => {
+    if (specialPricing) return specialPricing.amount;
+
+    const billingCycle = effectiveBillingCycle || "monthly"; // monthly | termly | yearly
+    const featurePlan = (school as any)?.featurePlan || "starter"; // starter | standard
+
+    // Base monthly prices
+    const BASE_PRICES: Record<string, number> = { starter: 100, standard: 300 };
+    const base = BASE_PRICES[featurePlan] ?? 100;
+
+    // Calculate total based on cycle
+    if (billingCycle === "monthly") {
+      return base; // GHS 100 or GHS 300
+    }
+
+    if (billingCycle === "termly") {
+      // 4 months × base × 0.90 (10% discount)
+      const total = base * 4 * 0.9;
+
+      // Pro-rate if mid-term
+      const startType = (school as any)?.billing?.startType || "term_start";
+      if (startType === "term_start") return Math.round(total);
+
+      const startDate = parseSchoolDate(schoolConfig?.schoolReopenDate);
+      const endDate = parseSchoolDate(schoolConfig?.vacationDate);
+      if (!startDate || !endDate || endDate <= startDate) return Math.round(total);
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (today <= startDate) return Math.round(total);
+
+      const totalDays = diffDays(startDate, endDate) + 1;
+      const remainingDays = Math.max(0, diffDays(today, endDate) + 1);
+      if (!totalDays || remainingDays <= 0) return Math.round(total);
+
+      const prorated = (total * remainingDays) / totalDays;
+      return Math.max(1, Math.round(prorated));
+    }
+
+    if (billingCycle === "yearly") {
+      // 12 months × base × 0.80 (20% discount)
+      return Math.round(base * 12 * 0.8);
+    }
+
+    return base;
+  }, [effectiveBillingCycle, school, schoolConfig, specialPricing]);
+
+  useEffect(() => {
+    if (isFreePlan) return;
+    setAmount(String(expectedAmount));
+  }, [expectedAmount, isFreePlan]);
+
+  useEffect(() => {
+    if (!school?.id) return;
+    const loadConfig = async () => {
+      try {
+        const data = await db.getSchoolConfig(school.id);
+        setSchoolConfig(data);
+      } catch (error) {
+        console.error("Failed to load school config for billing", error);
+      }
+    };
+    loadConfig();
+  }, [school?.id]);
+
+  const loadPaymentHistory = async () => {
+    if (!school?.id) return;
+    setLoadingHistory(true);
+    try {
+      const paymentsRef = collection(firestore, "payments");
+      const paymentsQuery = query(
+        paymentsRef,
+        where("schoolId", "==", school.id),
+      );
+      const snap = await getDocs(paymentsQuery);
+      const rows = snap.docs
+        .map((doc) => ({
+          id: doc.id,
+          ...(doc.data() as any),
+        }))
+        .filter(isBillingPayment)
+        .sort((a, b) => {
+          const aTime = a.createdAt?.toMillis
+            ? a.createdAt.toMillis()
+            : new Date(a.createdAt || 0).getTime();
+          const bTime = b.createdAt?.toMillis
+            ? b.createdAt.toMillis()
+            : new Date(b.createdAt || 0).getTime();
+          return bTime - aTime;
+        });
+      setPaymentHistory(rows);
+    } catch (error) {
+      console.error("Failed to load payment history", error);
+      showToast("Failed to load payment history.", { type: "error" });
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const handleVerifyPending = async () => {
+    if (!subscriptionPaymentHistory.length) {
+      showToast("No payments to verify.", { type: "info" });
+      return;
+    }
+
+    const pendingPayments = subscriptionPaymentHistory.filter((payment) =>
+      ["pending", "abandoned", "failed"].includes(
+        String(payment.status || "pending").toLowerCase(),
+      ),
+    );
+
+    if (!pendingPayments.length) {
+      showToast("All payments are already verified.", { type: "success" });
+      return;
+    }
+
+    try {
+      setVerifying(true);
+      let updated = 0;
+
+      for (const payment of pendingPayments) {
+        if (!payment.reference) continue;
+        await verifySchoolPayment({ reference: payment.reference });
+        updated += 1;
+      }
+
+      showToast(`Verification complete. ${updated} payment(s) updated.`, {
+        type: "success",
+      });
+      await loadPaymentHistory();
+    } catch (error: any) {
+      console.error("Payment verification failed:", error);
+      showToast(error?.message || "Payment verification failed.", {
+        type: "error",
+      });
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isFreePlan) return;
+    loadPaymentHistory();
+  }, [school?.id, isFreePlan]);
+
+  useEffect(() => {
+    if (isFreePlan) return;
+    const params = new URLSearchParams(window.location.search);
+    const reference = params.get("reference") || params.get("trxref");
+    if (!reference) return;
+
+    const verifyAndRedirect = async () => {
+      try {
+        setVerifying(true);
+        const result = await verifySchoolPayment({ reference });
+        if (String(result?.status || "").toLowerCase() === "success") {
+          setShowSuccess(true);
+          refreshSchool();
+          setTimeout(() => {
+            navigate("/admin", { replace: true });
+          }, 1800);
+          return;
+        }
+
+        showToast(
+          "Payment was not completed. Please try again or verify later.",
+          {
+            type: "info",
+          },
+        );
+        await loadPaymentHistory();
+      } catch (error: any) {
+        console.error("Payment verification failed:", error);
+        showToast(error?.message || "Payment verification failed.", {
+          type: "error",
+        });
+      } finally {
+        setVerifying(false);
+      }
+    };
+
+    verifyAndRedirect();
+  }, [isFreePlan, navigate, refreshSchool]);
+
+  const handlePay = async () => {
+    if (isFreePlan) return;
+    const numericAmount = Number(expectedAmount);
+    if (!numericAmount || numericAmount <= 0) {
+      showToast("Enter a valid amount.", { type: "error" });
+      return;
+    }
+
+    try {
+      setProcessing(true);
+      const response = await initiateSchoolBilling({
+        amount: numericAmount * 100,
+        currency: "GHS",
+        metadata: {
+          billingCycle: effectiveBillingCycle,
+          specialPricingApplied: Boolean(specialPricing),
+        },
+      });
+      window.location.href = response.authorizationUrl;
+    } catch (error: any) {
+      console.error("Billing error:", error);
+      showToast(error?.message || "Payment initiation failed.", {
+        type: "error",
+      });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  if (isFreePlan || isTrialActive) {
+    return (
+      <Layout title="Billing & Subscription">
+        <div className="max-w-5xl mx-auto space-y-6">
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-6 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                <ShieldCheck size={18} />
+              </div>
+              <div>
+                <h1 className="text-xl font-semibold text-slate-900">
+                  {isTrialVacationPaused
+                    ? "Free Trial Paused for School Vacation"
+                    : isTrialActive
+                      ? "Free 30-Day Trial Active"
+                      : "Free Plan Active"}
+                </h1>
+                <p className="text-sm text-slate-600 mt-1">
+                  {isTrialVacationPaused
+                    ? "Your trial countdown is paused. The Super Admin will resume it when schools reopen, and you will not lose any trial days."
+                    : isTrialActive && trialEndsAt
+                    ? `Your free access continues until ${trialEndsAt.toLocaleDateString()}. You can choose a paid plan when the trial ends.`
+                    : "Billing is disabled for your school. Contact your super admin if you need to change your subscription."}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
+
+  return (
+    <Layout title="Billing & Subscription">
+      <div className="max-w-5xl mx-auto space-y-6">
+        {showSuccess && (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-6 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                <ShieldCheck size={18} />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Subscription renewed successfully
+                </h2>
+                <p className="text-sm text-slate-600 mt-1">
+                  Great news! Your access has been restored. Redirecting to the
+                  dashboard now.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-indigo-50 via-white to-emerald-50 p-6 shadow-sm">
+          <div className="absolute -top-16 -right-16 h-40 w-40 rounded-full bg-indigo-200/40 blur-3xl" />
+          <div className="absolute -bottom-20 -left-16 h-48 w-48 rounded-full bg-emerald-200/40 blur-3xl" />
+          <div className="relative">
+            <h1 className="text-3xl font-bold text-slate-900">
+              Billing & Subscription
+            </h1>
+            <p className="text-sm text-slate-600 mt-2">
+              Pay your {effectiveBillingCycle} subscription via Mobile Money
+              and keep your school active.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-100 p-6 shadow-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-10 w-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                <CreditCard size={18} />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Pay{" "}
+                  {effectiveBillingCycle.charAt(0).toUpperCase() +
+                    effectiveBillingCycle.slice(1)}{" "}
+                  (MoMo)
+                </h2>
+                <p className="text-sm text-slate-500">
+                  MTN, Telecel, AirtelTigo supported via Paystack.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Amount (GHS)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={amount}
+                  readOnly
+                  className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50 text-slate-700"
+                />
+              </div>
+              <div className="flex items-end">
+                <button
+                  onClick={handlePay}
+                  disabled={processing}
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-emerald-600 text-white px-5 py-2.5 font-semibold hover:bg-emerald-700 transition disabled:opacity-60"
+                >
+                  {processing ? "Redirecting..." : "Pay with MoMo"}
+                  <ArrowRight size={16} />
+                </button>
+              </div>
+            </div>
+            {/* <p className="mt-3 text-xs text-slate-400">
+              Paystack Public Key loaded: {PAYSTACK_PUBLIC_KEY ? "Yes" : "No"}
+            </p> */}
+          </div>
+
+          <div data-assistant-focus="billing" className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-10 w-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                <ShieldCheck size={18} />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Subscription Status
+                </h3>
+                <p className="text-sm text-slate-500">Your current plan</p>
+              </div>
+            </div>
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Feature Plan</span>
+                <span className="font-semibold text-slate-800 capitalize">
+                  {(school as any)?.featurePlan || "Starter"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Billing Cycle</span>
+                <span className="font-semibold text-slate-800 capitalize">
+                  {effectiveBillingCycle}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Amount Due</span>
+                <span className="font-bold text-slate-900">
+                  GH₵ {expectedAmount.toLocaleString()}
+                </span>
+              </div>
+              {specialPricing ? (
+                <div className="rounded-lg bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700">
+                  Special pricing applied
+                  {specialPricing.note ? ` — ${specialPricing.note}` : ""}
+                </div>
+              ) : effectiveBillingCycle !== "monthly" && (
+                <div className="text-xs text-emerald-600 font-semibold bg-emerald-50 rounded-lg px-3 py-2">
+                  {effectiveBillingCycle === "termly" ? "10% termly discount applied" : "20% yearly discount applied"}
+                </div>
+              )}
+              <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                <span className="text-slate-500">Status</span>
+                <span
+                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${displayStatus.className}`}
+                >
+                  {displayStatus.label}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Payment History
+              </h2>
+              <p className="text-sm text-slate-500">
+                Track all payments made by your school admin account.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleVerifyPending}
+                className="text-sm text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-lg hover:bg-emerald-50"
+                disabled={loadingHistory || verifying}
+              >
+                {verifying ? "Verifying..." : "Verify Pending"}
+              </button>
+              <button
+                onClick={loadPaymentHistory}
+                className="text-sm text-slate-600 border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50"
+                disabled={loadingHistory}
+              >
+                {loadingHistory ? "Loading..." : "Refresh"}
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-slate-500 border-b border-slate-100">
+                  <th className="py-3 pr-4">Amount</th>
+                  <th className="py-3 pr-4">Currency</th>
+                  <th className="py-3 pr-4">Status</th>
+                  <th className="py-3 pr-4">Reference</th>
+                  <th className="py-3">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {subscriptionPaymentHistory.map((payment) => {
+                  const statusMeta = getStatusMeta(payment.status);
+                  return (
+                    <tr key={payment.id} className="border-b border-slate-100">
+                      <td className="py-3 pr-4 text-slate-700">
+                        {formatAmount(payment.amount, payment.currency)}
+                      </td>
+                      <td className="py-3 pr-4 text-slate-600">
+                        {payment.currency || "GHS"}
+                      </td>
+                      <td className="py-3 pr-4">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${statusMeta.className}`}
+                        >
+                          {statusMeta.label}
+                        </span>
+                      </td>
+                      <td className="py-3 pr-4 text-slate-500">
+                        {payment.reference || "-"}
+                      </td>
+                      <td className="py-3 text-slate-500">
+                        {formatDate(payment.createdAt)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!subscriptionPaymentHistory.length && !loadingHistory && (
+              <div className="text-center text-sm text-slate-400 py-10">
+                No payment history yet.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </Layout>
+  );
+};
+
+export default Billing;

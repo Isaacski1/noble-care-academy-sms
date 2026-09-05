@@ -1,12 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import {
-  collection,
-  getDocs,
-  orderBy,
-  query,
-  Timestamp,
-  where,
-} from "firebase/firestore";
+﻿import React, { useEffect, useMemo, useState } from "react";
+import { collection, getDocs, orderBy, query, Timestamp, where, DocumentSnapshot } from "firebase/firestore";
 import Layout from "../../components/Layout";
 import { useSchool } from "../../context/SchoolContext";
 import { db } from "../../services/mockDb";
@@ -193,7 +186,7 @@ const Billing: React.FC = () => {
     }
 
     if (billingCycle === "termly") {
-      // 4 months × base × 0.90 (10% discount)
+      // 4 months Ã— base Ã— 0.90 (10% discount)
       const total = base * 4 * 0.9;
 
       // Pro-rate if mid-term
@@ -217,7 +210,7 @@ const Billing: React.FC = () => {
     }
 
     if (billingCycle === "yearly") {
-      // 12 months × base × 0.80 (20% discount)
+      // 12 months Ã— base Ã— 0.80 (20% discount)
       return Math.round(base * 12 * 0.8);
     }
 
@@ -534,13 +527,13 @@ const Billing: React.FC = () => {
               <div className="flex items-center justify-between">
                 <span className="text-slate-500">Amount Due</span>
                 <span className="font-bold text-slate-900">
-                  GH₵ {expectedAmount.toLocaleString()}
+                  GHâ‚µ {expectedAmount.toLocaleString()}
                 </span>
               </div>
               {specialPricing ? (
                 <div className="rounded-lg bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700">
                   Special pricing applied
-                  {specialPricing.note ? ` — ${specialPricing.note}` : ""}
+                  {specialPricing.note ? ` â€” ${specialPricing.note}` : ""}
                 </div>
               ) : effectiveBillingCycle !== "monthly" && (
                 <div className="text-xs text-emerald-600 font-semibold bg-emerald-50 rounded-lg px-3 py-2">
@@ -570,21 +563,21 @@ const Billing: React.FC = () => {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={handleVerifyPending}
-                className="text-sm text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-lg hover:bg-emerald-50"
-                disabled={loadingHistory || verifying}
-              >
-                {verifying ? "Verifying..." : "Verify Pending"}
-              </button>
-              <button
-                onClick={loadPaymentHistory}
-                className="text-sm text-slate-600 border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50"
-                disabled={loadingHistory}
-              >
-                {loadingHistory ? "Loading..." : "Refresh"}
-              </button>
-            </div>
+            <button
+              onClick={handleVerifyPending}
+              className="text-sm text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-lg hover:bg-emerald-50"
+              disabled={verifying}
+            >
+              {verifying ? "Verifying..." : "Verify Pending"}
+            </button>
+            <button
+              onClick={loadPaymentHistory}
+              className="text-sm text-slate-600 border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50"
+              disabled={loadingMore}
+            >
+              {loadingMore ? "Loading..." : "Refresh"}
+            </button>
+          </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -640,3 +633,5 @@ const Billing: React.FC = () => {
 };
 
 export default Billing;
+
+

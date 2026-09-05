@@ -3081,7 +3081,7 @@ const sendDemoNotifications = async (demoDoc) => {
  * POST /api/auth/send-password-reset-email
  * Sends a Firebase password reset link via Resend for improved deliverability
  */
-app.post("/api/auth/send-password-reset-email", async (req, res) => {
+app.post("/api/auth/send-password-reset-email", authLimiter, async (req, res) => {
   try {
     const { email } = req.body || {};
 
@@ -3095,7 +3095,7 @@ app.post("/api/auth/send-password-reset-email", async (req, res) => {
 
     const normalizedEmail = String(email).trim().toLowerCase();
 
-    // Generate a Firebase password reset link (handled by Firebase Admin)
+// Generate a Firebase password reset link (handled by Firebase Admin)
     const resetLink = await admin.auth().generatePasswordResetLink(normalizedEmail);
 
     const from = RESEND_FROM_NAME
@@ -3113,87 +3113,86 @@ app.post("/api/auth/send-password-reset-email", async (req, res) => {
         to: [normalizedEmail],
         subject: "Reset your School Manager GH password",
         html: `
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-              body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-              table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
-              img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
-              body { margin: 0; padding: 0; width: 100% !important; min-width: 100%; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
-              .email-wrapper { width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; }
-              .header { background: linear-gradient(135deg, #0B4A82, #1160A8); padding: 32px 20px; text-align: center; }
-              .header img { height: 48px; width: auto; display: block; margin: 0 auto; }
-              .header-title { color: #ffffff; font-size: 24px; font-weight: 700; line-height: 1.3; margin: 20px 0 0; }
-              .content { padding: 32px 20px; color: #0f172a; }
-              .content p { font-size: 16px; line-height: 1.6; margin: 0 0 16px; }
-              .button-container { text-align: center; }
-              .cta-button { display: inline-block; background: #0B4A82; color: #ffffff !important; text-decoration: none; border-radius: 999px; padding: 14px 28px; font-size: 15px; font-weight: 700; min-width: 200px; }
-              .link-text { color: #64748B; font-size: 13px; line-height: 1.6; word-break: break-all; }
-              .link-text a { color: #0B4A82; text-decoration: none; }
-              .footer { background: #F8FAFC; padding: 16px 20px; text-align: center; color: #94A3B8; font-size: 12px; }
-              .footer p { margin: 0; }
-              @media screen and (max-width: 600px) {
-                .email-wrapper { border-radius: 0; }
-                .header { padding: 24px 16px; }
-                .header-title { font-size: 20px; }
-                .content { padding: 24px 16px; }
-                .cta-button { width: 100% !important; max-width: 100%; box-sizing: border-box; }
-              }
-            </style>
-          </head>
-          <body>
-            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color:#f3f4f6;">
-              <tr>
-                <td align="center" style="padding:20px;">
-                  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="email-wrapper">
-                    <tr>
-                      <td class="header">
-                        <img src="https://school-manager-gh.web.app/logo.png" alt="School Manager GH" />
-                        <h1 class="header-title">Password Reset</h1>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td class="content">
-                        <p>We received a request to reset your password. Click the button below to proceed.</p>
-                        <div class="button-container">
-                          <a href="${resetLink}" class="cta-button">Reset password</a>
-                        </div>
-                        <p class="link-text">Or paste this link into your browser: <a href="${resetLink}">${resetLink}</a></p>
-                        <p style="font-size:12px;color:#999;margin-top:18px;">If you didn't request this, you can ignore this email.</p>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td class="footer">
-                        <p>School Manager GH</p>
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-            </table>
-          </body>
-          </html>
-        `,
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+    body { margin: 0; padding: 0; width: 100% !important; min-width: 100%; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
+    .email-wrapper { width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; }
+    .header { background: linear-gradient(135deg, #0B4A82, #1160A8); padding: 32px 20px; text-align: center; }
+    .header img { height: 48px; width: auto; display: block; margin: 0 auto; }
+    .header-title { color: #ffffff; font-size: 24px; font-weight: 700; line-height: 1.3; margin: 20px 0 0; }
+    .content { padding: 32px 20px; color: #0f172a; }
+    .content p { font-size: 16px; line-height: 1.6; margin: 0 0 16px; }
+    .button-container { text-align: center; }
+    .cta-button { display: inline-block; background: #0B4A82; color: #ffffff !important; text-decoration: none; border-radius: 999px; padding: 14px 28px; font-size: 15px; font-weight: 700; min-width: 200px; }
+    .link-text { color: #64748B; font-size: 13px; line-height: 1.6; word-break: break-all; }
+    .link-text a { color: #0B4A82; text-decoration: none; }
+    .footer { background: #F8FAFC; padding: 16px 20px; text-align: center; color: #94A3B8; font-size: 12px; }
+    .footer p { margin: 0; }
+    @media screen and (max-width: 600px) {
+      .email-wrapper { border-radius: 0; }
+      .header { padding: 24px 16px; }
+      .header-title { font-size: 20px; }
+      .content { padding: 24px 16px; }
+      .cta-button { width: 100% !important; max-width: 100%; box-sizing: border-box; }
+    }
+  </style>
+</head>
+<body>
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color:#f3f4f6;">
+    <tr>
+      <td align="center" style="padding:20px;">
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="email-wrapper">
+          <tr>
+            <td class="header">
+              <img src="https://school-manager-gh.web.app/logo.png" alt="School Manager GH" />
+              <h1 class="header-title">Password Reset</h1>
+            </td>
+          </tr>
+          <tr>
+            <td class="content">
+              <p>We received a request to reset your password. Click the button below to proceed.</p>
+              <div class="button-container">
+                <a href="${resetLink}" class="cta-button">Reset password</a>
+              </div>
+              <p class="link-text">Or paste this link into your browser: <a href="${resetLink}">${resetLink}</a></p>
+              <p style="font-size:12px;color:#999;margin-top:18px;">If you didn't request this, you can ignore this email.</p>
+            </td>
+          </tr>
+          <tr>
+            <td class="footer">
+              <p>School Manager GH</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+      `,
       }),
     });
 
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
       console.error("Resend send reset email error:", body);
-      throw new Error(body?.message || `Resend failed with ${response.status}`);
+      // Still return success to prevent email enumeration
+      return res.json({ success: true, message: "If an account exists for that email, a password reset link has been sent." });
     }
 
-    return res.json({ success: true, message: "Password reset email sent" });
-  } catch (error) {
+    return res.json({ success: true, message: "If an account exists for that email, a password reset link has been sent." });
+} catch (error) {
     console.error("/api/auth/send-password-reset-email error:", error);
-    if (error?.code === "auth/user-not-found") {
-      return res.status(404).json({ error: "No account found with this email" });
-    }
-    return res.status(500).json({ error: error?.message || "Failed to send reset email" });
-  }
+    // Return generic success message to prevent email enumeration
+    return res.json({ success: true, message: "If an account exists for that email, a password reset link has been sent." });
+}
 });
 
 const summarizeNotificationFailure = (result = {}) =>

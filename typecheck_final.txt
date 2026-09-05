@@ -1,0 +1,63 @@
+﻿
+> school-manager-gh@0.0.0 typecheck
+> tsc --noEmit
+
+components/ConnectionStatusIndicator.tsx(27,52): error TS2339: Property 'effectiveType' does not exist on type 'unknown'.
+components/ConnectionStatusIndicator.tsx(37,28): error TS2339: Property 'addEventListener' does not exist on type 'unknown'.
+components/ConnectionStatusIndicator.tsx(46,30): error TS2339: Property 'removeEventListener' does not exist on type 'unknown'.
+pages/admin/Billing.tsx(576,25): error TS2304: Cannot find name 'loadingMore'.
+pages/admin/Billing.tsx(578,16): error TS2304: Cannot find name 'loadingMore'.
+pages/admin/FeesPayments.tsx(300,9): error TS2552: Cannot find name 'setSchoolConfig'. Did you mean 'schoolConfig'?
+pages/admin/ManageBackups.tsx(30,47): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(iterable?: Iterable<BackupType>): Set<BackupType>', gave the following error.
+    Argument of type '("manual" | "term-reset" | "safety-restore")[]' is not assignable to parameter of type 'Iterable<BackupType>'.
+      The types returned by '[Symbol.iterator]().next(...)' are incompatible between these types.
+        Type 'IteratorResult<"manual" | "term-reset" | "safety-restore", any>' is not assignable to type 'IteratorResult<BackupType, any>'.
+          Type 'IteratorYieldResult<"manual" | "term-reset" | "safety-restore">' is not assignable to type 'IteratorResult<BackupType, any>'.
+            Type 'IteratorYieldResult<"manual" | "term-reset" | "safety-restore">' is not assignable to type 'IteratorYieldResult<BackupType>'.
+              Type '"manual" | "term-reset" | "safety-restore"' is not assignable to type 'BackupType'.
+                Type '"manual"' is not assignable to type 'BackupType'.
+pages/admin/ManageBackups.tsx(58,3): error TS2353: Object literal may only specify known properties, and 'manual' does not exist in type 'Record<BackupType, { badge: string; card: string; }>'.
+pages/admin/ManageBackups.tsx(95,16): error TS2339: Property 'manual' does not exist on type 'Record<BackupType, { badge: string; card: string; }>'.
+pages/admin/ManageBackups.tsx(103,10): error TS2678: Type '"recycle-bin"' is not comparable to type 'BackupType'.
+pages/admin/ManageBackups.tsx(105,10): error TS2678: Type '"recovery-point"' is not comparable to type 'BackupType'.
+pages/admin/ManageBackups.tsx(107,10): error TS2678: Type '"safety-restore"' is not comparable to type 'BackupType'.
+pages/admin/ManageBackups.tsx(109,10): error TS2678: Type '"term-reset"' is not comparable to type 'BackupType'.
+pages/admin/ManageBackups.tsx(111,10): error TS2678: Type '"manual"' is not comparable to type 'BackupType'.
+pages/admin/ManageBackups.tsx(119,4): error TS2367: This comparison appears to be unintentional because the types 'BackupType' and '"safety-restore"' have no overlap.
+pages/super-admin/Backups.tsx(34,47): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(iterable?: Iterable<BackupType>): Set<BackupType>', gave the following error.
+    Argument of type '("manual" | "term-reset" | "safety-restore")[]' is not assignable to parameter of type 'Iterable<BackupType>'.
+      The types returned by '[Symbol.iterator]().next(...)' are incompatible between these types.
+        Type 'IteratorResult<"manual" | "term-reset" | "safety-restore", any>' is not assignable to type 'IteratorResult<BackupType, any>'.
+          Type 'IteratorYieldResult<"manual" | "term-reset" | "safety-restore">' is not assignable to type 'IteratorResult<BackupType, any>'.
+            Type 'IteratorYieldResult<"manual" | "term-reset" | "safety-restore">' is not assignable to type 'IteratorYieldResult<BackupType>'.
+              Type '"manual" | "term-reset" | "safety-restore"' is not assignable to type 'BackupType'.
+                Type '"manual"' is not assignable to type 'BackupType'.
+pages/super-admin/Backups.tsx(72,10): error TS2678: Type '"recycle-bin"' is not comparable to type 'BackupType'.
+pages/super-admin/Backups.tsx(74,10): error TS2678: Type '"recovery-point"' is not comparable to type 'BackupType'.
+pages/super-admin/Backups.tsx(76,10): error TS2678: Type '"safety-restore"' is not comparable to type 'BackupType'.
+pages/super-admin/Backups.tsx(78,10): error TS2678: Type '"term-reset"' is not comparable to type 'BackupType'.
+pages/super-admin/Backups.tsx(80,10): error TS2678: Type '"manual"' is not comparable to type 'BackupType'.
+pages/super-admin/Backups.tsx(88,4): error TS2367: This comparison appears to be unintentional because the types 'BackupType' and '"safety-restore"' have no overlap.
+pages/super-admin/Backups.tsx(263,45): error TS2367: This comparison appears to be unintentional because the types 'BackupType' and '"recovery-point"' have no overlap.
+pages/super-admin/Backups.tsx(267,45): error TS2367: This comparison appears to be unintentional because the types 'BackupType' and '"recycle-bin"' have no overlap.
+services/mockDb.ts(652,7): error TS2367: This comparison appears to be unintentional because the types 'BackupType' and '"manual"' have no overlap.
+services/mockDb.ts(653,7): error TS2367: This comparison appears to be unintentional because the types 'BackupType' and '"term-reset"' have no overlap.
+services/mockDb.ts(654,7): error TS2367: This comparison appears to be unintentional because the types 'BackupType' and '"safety-restore"' have no overlap.
+services/mockDb.ts(802,7): error TS2322: Type '"recovery-point"' is not assignable to type 'BackupType'.
+services/mockDb.ts(825,7): error TS2322: Type '"recycle-bin"' is not assignable to type 'BackupType'.
+services/mockDb.ts(838,14): error TS2678: Type '"settings"' is not comparable to type 'BackupType'.
+services/mockDb.ts(897,14): error TS2678: Type '"settings"' is not comparable to type 'BackupType'.
+services/mockDb.ts(3188,9): error TS2322: Type '"manual" | "term-reset" | "safety-restore"' is not assignable to type 'BackupType'.
+  Type '"manual"' is not assignable to type 'BackupType'.
+services/mockDb.ts(3448,21): error TS2322: Type '"term-reset"' is not assignable to type 'BackupType'.
+services/mockDb.ts(3448,35): error TS2322: Type '"manual"' is not assignable to type 'BackupType'.
+services/mockDb.ts(3448,45): error TS2322: Type '"safety-restore"' is not assignable to type 'BackupType'.
+services/mockDb.ts(3465,7): error TS2322: Type '("recovery-point" | "recycle-bin")[]' is not assignable to type 'BackupType[]'.
+  Type '"recovery-point" | "recycle-bin"' is not assignable to type 'BackupType'.
+    Type '"recovery-point"' is not assignable to type 'BackupType'.
+services/mockDb.ts(3836,7): error TS2367: This comparison appears to be unintentional because the types 'BackupType' and '"recovery-point"' have no overlap.
+services/mockDb.ts(3837,7): error TS2367: This comparison appears to be unintentional because the types 'BackupType' and '"recycle-bin"' have no overlap.
+services/mockDb.ts(4233,17): error TS2345: Argument of type 'Firestore' is not assignable to parameter of type 'CollectionReference<unknown, DocumentData>'.
+  Type 'Firestore' is missing the following properties from type 'CollectionReference<unknown, DocumentData>': id, path, parent, withConverter, and 2 more.

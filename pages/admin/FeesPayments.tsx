@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Layout from "../../components/Layout";
 import { useSchool } from "../../context/SchoolContext";
@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { API_BASE_URL } from "../../src/config";
 import DailyCollections from "../../components/finance/DailyCollections";
+import * as XLSX from "xlsx";
 import DailyCollectionHandover from "../../components/finance/DailyCollectionHandover";
 
 
@@ -244,7 +245,7 @@ const PAYMENT_METHOD_THEMES: Record<
 };
 
 const FeesPayments: React.FC = () => {
-  const { school } = useSchool();
+  const { school, schoolConfig } = useSchool();
   const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -290,9 +291,14 @@ const FeesPayments: React.FC = () => {
 
     const loadSystemScope = async () => {
       try {
-        const config = await db.getSchoolConfig(schoolId);
+        let config;
+        if (schoolConfig) {
+          config = schoolConfig;
+        } else {
+          config = await db.getSchoolConfig(schoolId);
+        }
         if (!active || !config) return;
-        setSchoolConfig(config);
+
         setAcademicYear(config.academicYear || initialAcademicYear);
         setTerm(normalizeTerm(config.currentTerm) || initialTerm);
       } catch {
@@ -593,7 +599,7 @@ const FeesPayments: React.FC = () => {
     paymentMethod: "MoMo" as PaymentMethod,
     receiptNumber: "",
   });
-  const [schoolConfig, setSchoolConfig] = useState<SchoolConfig | null>(null);
+
   const [deletingFeeId, setDeletingFeeId] = useState<string | null>(null);
   const [editingFeeId, setEditingFeeId] = useState<string | null>(null);
   const [openingLedgerForm, setOpeningLedgerForm] = useState<{
@@ -645,7 +651,7 @@ const FeesPayments: React.FC = () => {
     setLedgers(snapshot.ledgers);
     setPayments(snapshot.payments);
     setFinanceSettings(snapshot.financeSettings);
-    setSchoolConfig(snapshot.schoolConfig);
+
     setOnboardingMode(snapshot.onboardingMode || "fresh_start");
     setOnboardingDate(snapshot.onboardingDate || "");
   }, []);
@@ -702,67 +708,226 @@ const FeesPayments: React.FC = () => {
     window.localStorage.removeItem(financeCacheKey);
   }, [financeCacheKey]);
 
-  const csvEscape = (value: string | number | null | undefined) => {
-    if (value === null || value === undefined) return "";
-    const text = String(value).replace(/"/g, '""');
+  const downloadExcel = (
+  filename: string,
+  sheetName: string,
+  headers: string[],
+  rows: Array<Array<string | number | null | undefined>>,
+  currencyColumns: number[] = [],
+) => {
+  // Create workbook
+  const wb = XLSX.utils.book_new();
+
+  // Prepare data for worksheet
+  const data = [
+    headers,
+    ...rows.map(row => row.map(val => val === null || val === undefined ? "" : val))
+  ];
+
+  // Create worksheet
+  const ws = XLSX.utils.aoa_to_sheet(data);
+
+  // Style header row
+  const headerStyle = {
+    font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 },
+    fill: { fgColor: { rgb: "1E40AF" }, patternType: "solid" },
+    alignment: { horizontal: "center", vertical: "center", wrapText: true },
+    border: {
+      top: { style: "thin", color: { rgb: "000000" } },
+      bottom: { style: "thin", color: { rgb: "000000" } },
+      left: { style: "thin", color: { rgb: "000000" } },
+      right: { style: "thin", color: { rgb: "000000" } },
+    },
+  };
+
+  // Apply header style to all header cells
+  for (let i = 0; i < headers.length; i++) {
+    const cellRef = XLSX.utils.encode_cell({ r: 0, c: i });
+    if (ws[cellRef]) {
+      ws[cellRef].s = headerStyle;
+    }
+  }
+
+  // Style data rows
+  const dataStyle = {
+    font: { sz: 10 },
+    alignment: { horizontal: "left", vertical: "center" },
+    border: {
+      top: { style: "thin", color: { rgb: "D1D5DB" } },
+      bottom: { style: "thin", color: { rgb: "D1D5DB" } },
+      left: { style: "thin", color: { rgb: "D1D5DB" } },
+      right: { style: "thin", color: { rgb: "D1D5DB" } },
+    },
+  };
+
+  const numberStyle = {
+    font: { sz: 10 },
+    alignment: { horizontal: "right", vertical: "center" },
+    numFormat: "#,##0.00",
+    border: {
+      top: { style: "thin", color: { rgb: "D1D5DB" } },
+      bottom: { style: "thin", color: { rgb: "D1D5DB" } },
+      left: { style: "thin", color: { rgb: "D1D5DB" } },
+      right: { style: "thin", color: { rgb: "D1D5DB" } },
+    },
+  };
+
+  // Apply data style to all data cells
+  for (let r = 1; r < data.length; r++) {
+    for (let c = 0; c < headers.length; c++) {
+      const cellRef = XLSX.utils.encode_cell({ r, c });
+      if (ws[cellRef]) {
+        if (currencyColumns.includes(c)) {
+          ws[cellRef].s = numberStyle;
+        } else {
+          ws[cellRef].s = dataStyle;
+        }
+      }
+    }
+  }
+
+  // Set column widths
+  const colWidths = headers.map((header, index) => {
+    // Auto-size based on header and data
+    let maxWidth = header.length;
+    for (let r = 0; r < data.length; r++) {
+      const cellValue = data[r]?.[index];
+      if (cellValue !== null && cellValue !== undefined) {
+        const cellStr = String(cellValue);
+        if (cellStr.length > maxWidth) {
+          maxWidth = cellStr.length;
+        }
+      }
+    }
+    return { wch: Math.min(maxWidth + 4, 50) };
+  });
+  ws["!cols"] = colWidths;
+
+  // Add worksheet to workbook
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+
+  // Generate Excel file
+  XLSX.writeFile(wb, filename, { bookType: "xlsx" });
+};
+
+// CSV export functions with UTF-8 BOM for better Excel compatibility
+const csvEscape = (value: string | number | null | undefined) => {
+  if (value === null || value === undefined) return "";
+  const text = String(value).replace(/"/g, '""');
+  // Escape newlines and commas by wrapping in quotes
+  if (text.includes(",") || text.includes("\n") || text.includes('"')) {
     return `"${text}"`;
-  };
+  }
+  return text;
+};
 
-  const downloadCsv = (
-    filename: string,
-    headers: string[],
-    rows: Array<Array<string | number | null | undefined>>,
-  ) => {
-    const csv = [
-      headers.map(csvEscape).join(","),
-      ...rows.map((row) => row.map(csvEscape).join(",")),
-    ].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
-  };
+const downloadCsv = (
+  filename: string,
+  headers: string[],
+  rows: Array<Array<string | number | null | undefined>>,
+) => {
+  // Add UTF-8 BOM for better Excel compatibility
+  const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+  
+  const csvContent = [
+    headers.map(csvEscape).join(","),
+    ...rows.map((row) => row.map(csvEscape).join(",")),
+  ].join("\n");
+  
+  const blob = new Blob([bom, csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+};
 
-  const handleExportReport = () => {
-    if (isExporting) return;
-    setIsExporting(true);
-    const headers = [
-      "Student",
-      "Class",
-      "Fee",
-      "Amount Paid",
-      "Method",
-      "Receipt",
-      "Academic Year",
-      "Term",
-      "Date",
-    ];
-    const rows = paymentsSorted.map((payment) => {
-      const student = students.find((s) => s.id === payment.studentId);
-      const className = availableClasses.find(
-        (c) => c.id === payment.classId,
-      )?.name;
-      return [
-        student?.name || payment.studentId,
-        className || payment.classId,
-        payment.feeName,
-        payment.amountPaid,
-        payment.paymentMethod,
-        payment.receiptNumber || "",
-        payment.academicYear,
-        payment.term,
-        new Date(payment.createdAt).toLocaleString(),
+const handleExportReport = () => {
+      if (isExporting) return;
+      setIsExporting(true);
+      const headers = [
+        "Student",
+        "Class",
+        "Fee",
+        "Amount Paid",
+        "Method",
+        "Receipt",
+        "Academic Year",
+        "Term",
+        "Date",
       ];
-    });
+      const rows = paymentsSorted.map((payment) => {
+        const student = students.find((s) => s.id === payment.studentId);
+        const className = availableClasses.find(
+          (c) => c.id === payment.classId,
+        )?.name;
+        return [
+          student?.name || payment.studentId,
+          className || payment.classId,
+          payment.feeName,
+          payment.amountPaid,
+          payment.paymentMethod,
+          payment.receiptNumber || "",
+          payment.academicYear,
+          payment.term,
+          new Date(payment.createdAt).toLocaleString(),
+        ];
+      });
 
-    downloadCsv(`payments_${academicYear}_${term}.csv`, headers, rows);
-    setIsExporting(false);
-  };
+      downloadExcel(
+        `payments_${academicYear}_${term}.xlsx`,
+        "Payments",
+        headers,
+        rows,
+        [3], // Amount Paid column index
+      );
+      setIsExporting(false);
+      showToast("Excel file downloaded successfully!", { type: "success" });
+    };
+
+   const handleExportReportCsv = () => {
+     if (isExporting) return;
+     setIsExporting(true);
+     const headers = [
+       "Student",
+       "Class",
+       "Fee",
+       "Amount Paid",
+       "Method",
+       "Receipt",
+       "Academic Year",
+       "Term",
+       "Date",
+     ];
+     const rows = paymentsSorted.map((payment) => {
+       const student = students.find((s) => s.id === payment.studentId);
+       const className = availableClasses.find(
+         (c) => c.id === payment.classId,
+       )?.name;
+       return [
+         student?.name || payment.studentId,
+         className || payment.classId,
+         payment.feeName,
+         payment.amountPaid,
+         payment.paymentMethod,
+         payment.receiptNumber || "",
+         payment.academicYear,
+         payment.term,
+         new Date(payment.createdAt).toLocaleString(),
+       ];
+     });
+
+     downloadCsv(
+       `payments_${academicYear}_${term}.csv`,
+       headers,
+       rows
+     );
+     setIsExporting(false);
+     showToast("CSV file downloaded successfully!", { type: "success" });
+   };
 
   const handleExportDefaulters = () => {
     setActiveQuickExport("defaulters");
@@ -776,7 +941,13 @@ const FeesPayments: React.FC = () => {
         status,
       ];
     });
-    downloadCsv(`defaulters_${academicYear}_${term}.csv`, headers, rows);
+    downloadExcel(
+      `defaulters_${academicYear}_${term}.xlsx`,
+      "Defaulters",
+      headers,
+      rows,
+      [2], // Balance column index
+    );
     setTimeout(() => setActiveQuickExport(null), 600);
   };
 
@@ -784,10 +955,12 @@ const FeesPayments: React.FC = () => {
     setActiveQuickExport("weekly");
     const headers = ["Week", "Amount Collected"];
     const rows = collectionTrend.map((item) => [item.label, item.value]);
-    downloadCsv(
-      `collections_weekly_${academicYear}_${term}.csv`,
+    downloadExcel(
+      `collections_weekly_${academicYear}_${term}.xlsx`,
+      "Weekly Collections",
       headers,
       rows,
+      [1], // Amount column index
     );
     setTimeout(() => setActiveQuickExport(null), 600);
   };
@@ -796,10 +969,12 @@ const FeesPayments: React.FC = () => {
     setActiveQuickExport("class");
     const headers = ["Class", "Amount Collected"];
     const rows = classCollection.map((item) => [item.label, item.value]);
-    downloadCsv(
-      `collections_by_class_${academicYear}_${term}.csv`,
+    downloadExcel(
+      `collections_by_class_${academicYear}_${term}.xlsx`,
+      "Class Collections",
       headers,
       rows,
+      [1], // Amount column index
     );
     setTimeout(() => setActiveQuickExport(null), 600);
   };
@@ -827,7 +1002,7 @@ const FeesPayments: React.FC = () => {
 
         if (!renderedFirstPage && requestId === financeRequestIdRef.current) {
           // Pass a copy: `loaded` keeps mutating as later pages arrive, and
-          // the final snapshot reuses the same array — React would bail out
+          // the final snapshot reuses the same array � React would bail out
           // on the identical reference and leave a stale first-page render.
           setStudents([...loaded]);
           renderedFirstPage = true;
@@ -876,7 +1051,7 @@ const FeesPayments: React.FC = () => {
           classId: selectedClassId === "all" ? undefined : selectedClassId,
         }),
         db.getFinanceSettings(schoolId),
-        db.getSchoolConfig(schoolId),
+        Promise.resolve(schoolConfig),
       ]);
       if (requestId !== financeRequestIdRef.current) return;
       const snapshot: FinancePrimarySnapshot = {
@@ -2082,7 +2257,7 @@ const FeesPayments: React.FC = () => {
         ? "All Classes"
         : availableClasses.find((cls) => cls.id === selectedClassId)?.name ||
           "Class";
-    return `${academicYear} · ${term} · ${className}`;
+    return `${academicYear} - ${term} - ${className}`;
   }, [academicYear, term, selectedClassId]);
 
   const onboardingSummary = useMemo(() => {
@@ -2332,7 +2507,60 @@ const FeesPayments: React.FC = () => {
                 openingStatus: "Unpaid" as const,
                 openingPaidAmount: 0,
                 openingBalance: 0,
-              };
+};
+
+   const handleExportDefaultersCsv = () => {
+     if (isExporting) return;
+     setIsExporting(true);
+     const headers = ["Student", "Class", "Balance", "Status"];
+     const rows = defaulters.map(({ ledger, student, balance, status }) => {
+       const className = availableClasses.find((c) => c.id === ledger.classId)?.name;
+       return [
+         student?.name || ledger.studentId,
+         className || ledger.classId,
+         balance,
+         status,
+       ];
+     });
+
+     downloadCsv(
+       `defaulters_${academicYear}_${term}.csv`,
+       headers,
+       rows
+     );
+     setIsExporting(false);
+     showToast("CSV file downloaded successfully!", { type: "success" });
+   };
+
+   const handleExportWeeklyPaymentsCsv = () => {
+     if (isExporting) return;
+     setIsExporting(true);
+     const headers = ["Week", "Amount Collected"];
+     const rows = collectionTrend.map((item) => [item.label, item.value]);
+
+     downloadCsv(
+       `collections_weekly_${academicYear}_${term}.csv`,
+       headers,
+       rows
+     );
+     setIsExporting(false);
+     showToast("CSV file downloaded successfully!", { type: "success" });
+   };
+
+   const handleExportClassCollectionsCsv = () => {
+     if (isExporting) return;
+     setIsExporting(true);
+     const headers = ["Class", "Amount Collected"];
+     const rows = classCollection.map((item) => [item.label, item.value]);
+
+     downloadCsv(
+       `collections_by_class_${academicYear}_${term}.csv`,
+       headers,
+       rows
+     );
+     setIsExporting(false);
+     showToast("CSV file downloaded successfully!", { type: "success" });
+   };
         }
         return {
           ...fee,
@@ -2938,7 +3166,7 @@ const FeesPayments: React.FC = () => {
                       <span className="min-w-0">
                         <span className="block">Export report</span>
                         <span className="mt-1 block text-xs font-medium leading-5 text-sky-50/70">
-                          Download current CSV
+                          Download current Excel
                         </span>
                       </span>
                     </button>
@@ -3743,8 +3971,25 @@ const FeesPayments: React.FC = () => {
                     emphasis, and cleaner spacing.
                   </p>
                 </div>
+                <div className="flex gap-2">
                 <button
                   onClick={handleExportReport}
+                  disabled={isExporting}
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200/80 bg-white/90 px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isExporting ? (
+                    <span className="flex items-center gap-2">
+                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+                      Exporting...
+                    </span>
+                  ) : (
+                    <>
+                      <Download size={14} /> Export Excel
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={handleExportReportCsv}
                   disabled={isExporting}
                   className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200/80 bg-white/90 px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70"
                 >
@@ -3759,6 +4004,7 @@ const FeesPayments: React.FC = () => {
                     </>
                   )}
                 </button>
+              </div>
               </div>              <div className="mt-5 max-h-[620px] overflow-y-auto pr-2 space-y-3 scrollbar-thin">
                 {loading ? (
                   Array.from({ length: 5 }).map((_, index) => (
@@ -3930,78 +4176,156 @@ const FeesPayments: React.FC = () => {
                   </span>
                 </div>
                 <div className="mt-4 grid grid-cols-1 gap-3">
-                  <button
-                    onClick={handleExportDefaulters}
-                    className="inline-flex items-center justify-between gap-3 rounded-[22px] border border-rose-200/80 bg-gradient-to-r from-rose-50 via-white to-orange-50 px-4 py-3 text-left text-xs font-semibold text-slate-700 shadow-sm"
-                    disabled={activeQuickExport === "defaulters"}
-                  >
-                    {activeQuickExport === "defaulters" ? (
-                      <span className="flex items-center gap-2">
-                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
-                        Downloading...
-                      </span>
-                    ) : (
-                      <>
-                        <span>
-                          <span className="block text-sm font-semibold text-slate-900">
-                            Defaulters list
-                          </span>
-                          <span className="mt-1 block text-[11px] font-medium text-slate-500">
-                            Students with unpaid or partially paid balances.
-                          </span>
+<div className="flex gap-2">
+                    <button
+                      onClick={handleExportDefaulters}
+                      className="inline-flex items-center justify-between gap-3 rounded-[22px] border border-rose-200/80 bg-gradient-to-r from-rose-50 via-white to-orange-50 px-4 py-3 text-left text-xs font-semibold text-slate-700 shadow-sm"
+                      disabled={activeQuickExport === "defaulters"}
+                    >
+                      {activeQuickExport === "defaulters" ? (
+                        <span className="flex items-center gap-2">
+                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+                          Downloading...
                         </span>
-                        <Download size={16} />
-                      </>
-                    )}
-                  </button>
-                  <button
-                    onClick={handleExportWeeklyPayments}
-                    className="inline-flex items-center justify-between gap-3 rounded-[22px] border border-sky-200/80 bg-gradient-to-r from-sky-50 via-white to-cyan-50 px-4 py-3 text-left text-xs font-semibold text-slate-700 shadow-sm"
-                    disabled={activeQuickExport === "weekly"}
-                  >
-                    {activeQuickExport === "weekly" ? (
-                      <span className="flex items-center gap-2">
-                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
-                        Downloading...
-                      </span>
-                    ) : (
-                      <>
-                        <span>
-                          <span className="block text-sm font-semibold text-slate-900">
-                            Weekly collections
+                      ) : (
+                        <>
+                          <span>
+                            <span className="block text-sm font-semibold text-slate-900">
+                              Defaulters (Excel)
+                            </span>
+                            <span className="mt-1 block text-[11px] font-medium text-slate-500">
+                              Students with unpaid or partially paid balances.
+                            </span>
                           </span>
-                          <span className="mt-1 block text-[11px] font-medium text-slate-500">
-                            Recent collection activity grouped by week.
-                          </span>
+                          <Download size={16} />
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={handleExportDefaultersCsv}
+                      className="inline-flex items-center justify-between gap-3 rounded-[22px] border border-rose-200/80 bg-gradient-to-r from-rose-50 via-white to-orange-50 px-4 py-3 text-left text-xs font-semibold text-slate-700 shadow-sm"
+                      disabled={activeQuickExport === "defaulters"}
+                    >
+                      {activeQuickExport === "defaulters" ? (
+                        <span className="flex items-center gap-2">
+                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+                          Downloading...
                         </span>
-                        <Download size={16} />
-                      </>
-                    )}
-                  </button>
-                  <button
-                    onClick={handleExportClassCollections}
-                    className="inline-flex items-center justify-between gap-3 rounded-[22px] border border-violet-200/80 bg-gradient-to-r from-violet-50 via-white to-fuchsia-50 px-4 py-3 text-left text-xs font-semibold text-slate-700 shadow-sm"
-                    disabled={activeQuickExport === "class"}
-                  >
-                    {activeQuickExport === "class" ? (
-                      <span className="flex items-center gap-2">
-                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
-                        Downloading...
-                      </span>
-                    ) : (
-                      <>
-                        <span>
-                          <span className="block text-sm font-semibold text-slate-900">
-                            By class
+                      ) : (
+                        <>
+                          <span>
+                            <span className="block text-sm font-semibold text-slate-900">
+                              Defaulters (CSV)
+                            </span>
+                            <span className="mt-1 block text-[11px] font-medium text-slate-500">
+                              Students with unpaid or partially paid balances.
+                            </span>
                           </span>
-                          <span className="mt-1 block text-[11px] font-medium text-slate-500">
-                            Collection performance broken down by class.
-                          </span>
+                          <Download size={16} />
+                        </>
+                      )}
+                    </button>
+                  </div>
+<div className="flex gap-2">
+                    <button
+                      onClick={handleExportWeeklyPayments}
+                      className="inline-flex items-center justify-between gap-3 rounded-[22px] border border-sky-200/80 bg-gradient-to-r from-sky-50 via-white to-cyan-50 px-4 py-3 text-left text-xs font-semibold text-slate-700 shadow-sm"
+                      disabled={activeQuickExport === "weekly"}
+                    >
+                      {activeQuickExport === "weekly" ? (
+                        <span className="flex items-center gap-2">
+                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+                          Downloading...
                         </span>
-                        <Download size={16} />
-                      </>
-                    )}
-                  </button>
+                      ) : (
+                        <>
+                          <span>
+                            <span className="block text-sm font-semibold text-slate-900">
+                              Weekly collections (Excel)
+                            </span>
+                            <span className="mt-1 block text-[11px] font-medium text-slate-500">
+                              Recent collection activity grouped by week.
+                            </span>
+                          </span>
+                          <Download size={16} />
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={handleExportWeeklyPaymentsCsv}
+                      className="inline-flex items-center justify-between gap-3 rounded-[22px] border border-sky-200/80 bg-gradient-to-r from-sky-50 via-white to-cyan-50 px-4 py-3 text-left text-xs font-semibold text-slate-700 shadow-sm"
+                      disabled={activeQuickExport === "weekly"}
+                    >
+                      {activeQuickExport === "weekly" ? (
+                        <span className="flex items-center gap-2">
+                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+                          Downloading...
+                        </span>
+                      ) : (
+                        <>
+                          <span>
+                            <span className="block text-sm font-semibold text-slate-900">
+                              Weekly collections (CSV)
+                            </span>
+                            <span className="mt-1 block text-[11px] font-medium text-slate-500">
+                              Recent collection activity grouped by week.
+                            </span>
+                          </span>
+                          <Download size={16} />
+                        </>
+                      )}
+                    </button>
+                  </div>
+<div className="flex gap-2">
+                    <button
+                      onClick={handleExportClassCollections}
+                      className="inline-flex items-center justify-between gap-3 rounded-[22px] border border-violet-200/80 bg-gradient-to-r from-violet-50 via-white to-fuchsia-50 px-4 py-3 text-left text-xs font-semibold text-slate-700 shadow-sm"
+                      disabled={activeQuickExport === "class"}
+                    >
+                      {activeQuickExport === "class" ? (
+                        <span className="flex items-center gap-2">
+                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+                          Downloading...
+                        </span>
+                      ) : (
+                        <>
+                          <span>
+                            <span className="block text-sm font-semibold text-slate-900">
+                              By class (Excel)
+                            </span>
+                            <span className="mt-1 block text-[11px] font-medium text-slate-500">
+                              Collection performance broken down by class.
+                            </span>
+                          </span>
+                          <Download size={16} />
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={handleExportClassCollectionsCsv}
+                      className="inline-flex items-center justify-between gap-3 rounded-[22px] border border-violet-200/80 bg-gradient-to-r from-violet-50 via-white to-fuchsia-50 px-4 py-3 text-left text-xs font-semibold text-slate-700 shadow-sm"
+                      disabled={activeQuickExport === "class"}
+                    >
+                      {activeQuickExport === "class" ? (
+                        <span className="flex items-center gap-2">
+                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+                          Downloading...
+                        </span>
+                      ) : (
+                        <>
+                          <span>
+                            <span className="block text-sm font-semibold text-slate-900">
+                              By class (CSV)
+                            </span>
+                            <span className="mt-1 block text-[11px] font-medium text-slate-500">
+                              Collection performance broken down by class.
+                            </span>
+                          </span>
+                          <Download size={16} />
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -4482,7 +4806,7 @@ const FeesPayments: React.FC = () => {
                               </span>
                             )}
                             {fee.effectiveFromDate && fee.dueDate && (
-                              <span className="mx-1">•</span>
+                              <span className="mx-1">�</span>
                             )}
                             {fee.dueDate && (
                               <span>
@@ -5323,7 +5647,7 @@ const FeesPayments: React.FC = () => {
                               {payment.feeName}
                             </p>
                             <p className="text-xs text-slate-500">
-                              {payment.paymentMethod} •{" "}
+                              {payment.paymentMethod} �{" "}
                               {new Date(payment.createdAt).toLocaleDateString()}
                             </p>
                           </div>
@@ -5929,3 +6253,4 @@ const FeesPayments: React.FC = () => {
 };
 
 export default FeesPayments;
+

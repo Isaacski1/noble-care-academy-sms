@@ -24,7 +24,7 @@ const ConnectionStatusIndicator: React.FC = () => {
 
     const checkConnectionType = () => {
       if ("connection" in navigator && navigator.connection) {
-        const effectiveType = navigator.connection.effectiveType;
+        const connection = navigator.connection as any; const effectiveType = connection.effectiveType;
         setIsPoorConnection(effectiveType === "slow-2g" || effectiveType === "2g");
       } else {
         setIsPoorConnection(false);
@@ -34,7 +34,7 @@ const ConnectionStatusIndicator: React.FC = () => {
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
     if ("connection" in navigator && navigator.connection) {
-      navigator.connection.addEventListener("change", handleConnectionChange);
+      (navigator.connection as any).addEventListener("change", handleConnectionChange);
       // Initial check
       checkConnectionType();
     }
@@ -43,7 +43,7 @@ const ConnectionStatusIndicator: React.FC = () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
       if ("connection" in navigator && navigator.connection) {
-        navigator.connection.removeEventListener("change", handleConnectionChange);
+        (navigator.connection as any).removeEventListener("change", handleConnectionChange);
       }
     };
   }, [isOffline]);

@@ -1,0 +1,83 @@
+*** Begin Patch
+*** Update File: pages/admin/FeesPayments.tsx
+@@ -590,6 +590,16 @@
+     paymentMethod: "MoMo" as PaymentMethod,
+     receiptNumber: "",
+   );
++  // Pagination state for UI history
++  const [ledgersPage, setLedgersPage] = useState<StudentFeeLedger[]>([]);
++  const [ledgerPageIndex, setLedgerPageIndex] = useState(0);
++  const [ledgersHasMore, setLedgersHasMore] = useState(false);
++  const [ledgerLoadingMore, setLedgerLoadingMore] = useState(false);
++  const [paymentsPage, setPaymentsPage] = useState<StudentFeePayment[]>([]);
++  const [paymentPageIndex, setPaymentPageIndex] = useState(0);
++  const [paymentsHasMore, setPaymentsHasMore] = useState(false);
++  const [paymentLoadingMore, setPaymentLoadingMore] = useState(false);
+   const [deletingFeeId, setDeletingFeeId] = useState<string | null>(null);
+   const [editingFeeId, setEditingFeeId] = useState<string | null>(null);
+   const [openingLedgerForm, setOpeningLedgerForm] = useState<{
+@@ -645,6 +655,14 @@
+     setLedgers(snapshot.ledgers);
+     setPayments(snapshot.payments);
+     setFinanceSettings(snapshot.financeSettings);
++    // Initialize pagination with first page
++    setLedgersPage(snapshot.ledgers.slice(0, 50));
++    setLedgerPageIndex(1);
++    setLedgersHasMore(snapshot.ledgers.length > 50);
++    setPaymentsPage(snapshot.payments.slice(0, 50));
++    setPaymentPageIndex(1);
++    setPaymentsHasMore(snapshot.payments.length > 50);
+   setOnboardingMode(snapshot.onboardingMode || "fresh_start");
+   setOnboardingDate(snapshot.onboardingDate || "");
+ }, []);
+@@ -876,6 +893,14 @@
+           classId: selectedClassId === "all" ? undefined : selectedClassId,
+         }),
+         db.getFinanceSettings(schoolId),
+-        db.getSchoolConfig(schoolId),
++        // Use schoolConfig from context if available, otherwise fetch
++        (schoolConfig ? Promise.resolve(schoolConfig) : db.getSchoolConfig(schoolId)),
+       ]);
+       if (requestId !== financeRequestIdRef.current) return;
+       const snapshot: FinancePrimarySnapshot = {
+@@ -1330,6 +1355,20 @@
+       );
+     }
+   }, [ledgersToCreate]);
++  // Load more ledgers (client-side pagination from full ledgers)
++  const loadMoreLedgers = useCallback(() => {
++    if (ledgerLoadingMore || !ledgersHasMore) return;
++    setLedgerLoadingMore(true);
++    const nextIndex = ledgerPageIndex * 50;
++    const nextLedgers = ledgers.slice(nextIndex, nextIndex + 50);
++    setLedgersPage(prev => [...prev, ...nextLedgers]);
++    setLedgerPageIndex(prev => prev + 1);
++    setLedgerHasMore(nextIndex + 50 < ledgers.length);
++    setLedgerLoadingMore(false);
++  }, [ledgers, ledgerPageIndex, ledgersHasMore, ledgerLoadingMore]);
++  // Load more payments (client-side pagination from full payments)
++  const loadMorePayments = useCallback(() => {
++    if (paymentLoadingMore || !paymentsHasMore) return;
++    setPaymentLoadingMore(true);
++    const nextIndex = paymentPageIndex * 50;
++    const nextPayments = payments.slice(nextIndex, nextIndex + 50);
++    setPaymentsPage(prev => [...prev, ...nextPayments]);
++    setPaymentPageIndex(prev => prev + 1);
++    setPaymentsHasMore(nextIndex + 50 < payments.length);
++    setPaymentLoadingMore(false);
++  }, [payments, paymentPageIndex, paymentsHasMore, paymentLoadingMore]);
+   // Reset filters and pagination when schoolId, academicYear, term, or selectedClassId changes
+   useEffect(() => {
+@@ -1340,6 +1375,10 @@
+     setLedgers([]);
+     setPayments([]);
+     setAllFees([]);
++    // Reset pagination
++    setLedgersPage([]);
++    setLedgerPageIndex(0);
++    setLedgersHasMore(false);
++    setPaymentsPage([]);
++    setPaymentPageIndex(0);
++    setPaymentsHasMore(false);
+   }, [schoolId, academicYear, term, selectedClassId]);
+*** End Patch

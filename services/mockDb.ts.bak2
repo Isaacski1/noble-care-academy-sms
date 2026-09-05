@@ -1,0 +1,76 @@
+
+  async getStudentLedgersPage(params: {
+    schoolId?: string;
+    academicYear?: string;
+    term?: FeeTerm;
+    classId?: string | null;
+    pageSize?: number;
+    cursorId?: string | null;
+  }): Promise<SchoolScopedPage<StudentFeeLedger>> {
+    if (params.academicYear)
+    if (params.classId)
+      pageSize: params.pageSize,
+      cursorId: params.cursorId,
+      constraints,
+      mapDoc: (docSnap) => {
+        const data = docSnap.data() as StudentFeeLedger;
+        return {
+          ...data,
+          id: data.id || docSnap.id,
+        };
+      },
+    });
+  }
+
+  async getPaymentsPage(params: {
+    schoolId?: string;
+    academicYear?: string;
+    term?: FeeTerm;
+    classId?: string;
+    studentId?: string;
+    pageSize?: number;
+    cursorId?: string | null;
+  }): Promise<SchoolScopedPage<StudentFeePayment>> {
+    if (params.academicYear)
+    if (params.classId)
+    if (params.studentId)
+    const useV2 = await this.useFinanceV2(scopedSchoolId);
+    const paymentsCollection = useV2
+    const alternatePaymentsCollection = useV2
+    const readPaymentsFrom = async (targetCollection: ReturnType<typeof collection>) => {
+      const q = query(targetCollection, ...conditions);
+      return this.getCollectionBySchoolIdPageWithAlternate<StudentFeePayment>(targetCollection, scopedSchoolId, {
+        pageSize: params.pageSize,
+        cursorId: params.cursorId,
+      });
+    };
+    const primary = await readPaymentsFrom(paymentsCollection);
+    const alternate = await readPaymentsFrom(alternatePaymentsCollection);
+    const allPayments = [...primary];
+    const existingIds = new Set(allPayments.map((p) => p.id));
+    for (const payment of alternate) {
+      if (!existingIds.has(payment.id)) {
+        allPayments.push(payment);
+      }
+    }
+    return allPayments;
+  }
+
+// Helper method for paginated queries with alternate collection (like getPayments) - we need to implement this
+private async getCollectionBySchoolIdPageWithAlternate<T>(collectionName: ReturnType<typeof collection>, schoolId: string, options: { pageSize?: number; cursorId?: string | null; mapDoc?: (docSnap: any) => T } = {}): Promise<SchoolScopedPage<T>> {
+    // This is a simplified version - in reality we should alternate between primary and alternate collections
+    // For now, we'll just query the given collection (which is already the correct one based on useV2)
+    const pageSize = this.resolvePageSize(options.pageSize, 100, 300);
+    const constraints: QueryConstraint[] = [
+      ...(options.constraints || []),
+      orderBy(documentId()),
+    ];
+    const snap = await getDocs(query(collection(firestore, collectionName), ...constraints));
+    const data = snap.docs.map(options.mapDoc || ((docSnap) => ({ ...docSnap.data(), id: docSnap.id })));
+    return {
+      items: data.slice(0, pageSize),
+      nextCursor: data.length > pageSize ? data[pageSize].id : null,
+      hasMore: data.length > pageSize,
+    };
+  }
+
